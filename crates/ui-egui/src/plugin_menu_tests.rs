@@ -408,7 +408,7 @@ fn only_panel_reads_without_inputs_activate_without_a_dialog() {
             "missing grant" => {
                 plugin.groups.insert("file".into());
             }
-            _ => unreachable!(),
+            _ => panic!("unexpected panel-launch fixture: {reason}"),
         }
         plugin.entries[0] = entry;
         activate_entry(&mut h.app, 0, 0);
