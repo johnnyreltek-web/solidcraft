@@ -64,6 +64,7 @@ fn schemas_and_the_key_check_agree() {
             "participants",
             "profile",
             "profile_sketch",
+            "profile_snapshot",
             "profiles",
             "sketch",
             "up",
@@ -73,6 +74,33 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ProfilePropertiesParams>(), &["density", "profile"]);
     assert_keys(input_schema_for::<ProfileInsertParams>(), &["anchor", "angle", "at", "fixed", "profile", "sketch"]);
     assert_keys(input_schema_for::<RemoveMemberParams>(), &["members"]);
+}
+
+#[test]
+fn profile_snapshot_schema_and_strict_execution_accept_one_fixed_section_source() {
+    let snapshot = json!({"name":"Saved bar","sketch":{
+        "points":[
+            {"id":"p0","pos":[0,0],"fixed":true}, {"id":"p1","pos":[10,0],"fixed":true},
+            {"id":"p2","pos":[10,5],"fixed":true}, {"id":"p3","pos":[0,5],"fixed":true}
+        ],
+        "curves":[
+            {"id":"l1","type":"line","a":0,"b":1,"fixed":true},
+            {"id":"l2","type":"line","a":1,"b":2,"fixed":true},
+            {"id":"l3","type":"line","a":2,"b":3,"fixed":true},
+            {"id":"l4","type":"line","a":3,"b":0,"fixed":true}
+        ], "constraints":[]
+    }});
+    let (mut s, lines) = frame_session(ParamCheck::Strict);
+    let params = json!({"sketch":"Frame","lines":[lines[0]],"profile_snapshot":snapshot});
+    let schema = input_schema_for::<FrameMemberParams>();
+    assert!(conforms(schema.as_value(), schema.as_value(), &params));
+    s.execute("frame.member", &params).unwrap();
+    for key in ["profile", "profile_sketch"] {
+        let mut both = params.clone();
+        both[key] = if key == "profile" { tube() } else { json!("Section") };
+        assert!(!conforms(schema.as_value(), schema.as_value(), &both));
+        assert!(s.execute("frame.member", &both).is_err());
+    }
 }
 
 #[test]

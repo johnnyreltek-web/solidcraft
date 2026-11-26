@@ -229,6 +229,7 @@ mod extrude_new_sketch_tests;
 mod extrude_preview;
 mod file_load;
 mod file_picker;
+pub mod frame_library;
 pub(crate) mod frame_watch;
 #[cfg(test)]
 mod history_off_thread_tests;

@@ -175,8 +175,14 @@ impl Harness {
         // Test-owned reuse store: never the developer's per-user data folder.
         solidcraft_engine::use_import_cache_dir(std::env::temp_dir().join(format!("solidcraft-scenario-imports-{}", std::process::id())));
         solidcraft_ui_text::pin_system_language();
+        // Isolate before the first UI frame discovers installed plugins and their panels.
+        // A developer's personal library must never change a scenario's menus or viewport.
+        let dir = scratch_dir();
+        let mut session = Session::default();
+        session.plugin_state.plugins_dir = Some(dir.join("plugins"));
+        session.plugin_state.user.user_settings_dir = Some(dir.join("plugin-settings"));
         let mut h = Harness {
-            app: SolveApp::new(Session::default(), Services::default()),
+            app: SolveApp::new(session, Services::default()),
             ctx: {
                 let ctx = egui::Context::default();
                 crate::fonts::setup_bundled_fonts(&ctx);
@@ -185,7 +191,7 @@ impl Harness {
             output: Default::default(),
             opened: Vec::new(),
             shapes: Vec::new(),
-            dir: scratch_dir(),
+            dir,
             next_file: Rc::new(RefCell::new(None)),
             queue: None,
             time: 0.0,

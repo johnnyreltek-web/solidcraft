@@ -1,0 +1,10 @@
+{
+  "en": {"ui.frame_library.custom":"Custom dimensions", "ui.frame_library.label":"Profile library", "ui.frame_library.refresh":"Refresh profiles"},
+  "de": {"ui.frame_library.custom":"Eigene Abmessungen", "ui.frame_library.label":"Profilbibliothek", "ui.frame_library.refresh":"Profile aktualisieren"},
+  "ar": {"ui.frame_library.custom":"أبعاد مخصصة", "ui.frame_library.label":"مكتبة المقاطع", "ui.frame_library.refresh":"تحديث المقاطع"},
+  "he": {"ui.frame_library.custom":"מידות מותאמות", "ui.frame_library.label":"ספריית פרופילים", "ui.frame_library.refresh":"רענון פרופילים"},
+  "ja": {"ui.frame_library.custom":"カスタム寸法", "ui.frame_library.label":"プロファイルライブラリ", "ui.frame_library.refresh":"プロファイルを更新"},
+  "vi": {"ui.frame_library.custom":"Kích thước tùy chỉnh", "ui.frame_library.label":"Thư viện tiết diện", "ui.frame_library.refresh":"Làm mới tiết diện"},
+  "zh": {"ui.frame_library.custom":"自定义尺寸", "ui.frame_library.label":"型材库", "ui.frame_library.refresh":"刷新型材"},
+  "ko": {"ui.frame_library.custom":"사용자 지정 치수", "ui.frame_library.label":"프로파일 라이브러리", "ui.frame_library.refresh":"프로파일 새로 고침"}
+}

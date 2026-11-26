@@ -388,6 +388,9 @@ pub fn parse_pair_id(id: &str) -> Option<u32> {
 pub enum MemberProfile {
     /// A built-in profile, from its dimensions.
     Library { profile: ProfileSpec },
+    /// A self-contained library section, in millimetres in its own XY plane. It has no
+    /// dependencies on the source document, its faces or parameters.
+    Snapshot { name: String, sketch: Box<solidcraft_sketch::Sketch> },
     /// The profiles of a sketch, in the sketch's own x and y, its origin the profile's origin.
     /// Every profile (the default) means the material as nested loops alternate: an outline is
     /// material, a loop inside it a hole, a loop inside that material again, so a tube drawn as
@@ -398,6 +401,80 @@ pub enum MemberProfile {
         #[walk(profiles_of = sketch)]
         profiles: crate::ProfileSel,
     },
+}
+
+// A snapshot is fixed geometry: validation rejects all external references and expressions.
+impl crate::walk::Walk for Box<solidcraft_sketch::Sketch> {}
+
+/// The command representation of a reusable section. The same validation applies when a
+/// saved feature is evaluated, so hand-edited files cannot introduce sketch dependencies.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileSnapshot {
+    pub name: String,
+    pub sketch: solidcraft_sketch::Sketch,
+}
+
+/// A bounded, fixed section made of lines, circles and circular arcs only.
+pub fn validate_snapshot(name: &str, sketch: &solidcraft_sketch::Sketch) -> Result<()> {
+    use solidcraft_sketch::CurveKind;
+    if name.trim().is_empty() || name.len() > 128 || name.chars().any(char::is_control) {
+        return Err(invalid("profile snapshot name must contain 1–128 printable bytes"));
+    }
+    if sketch.curves.is_empty() || sketch.curves.len() > 256 || sketch.points.is_empty() || sketch.points.len() > 769 {
+        return Err(invalid("profile snapshot needs 1–256 curves and at most 769 points"));
+    }
+    if !sketch.constraints.is_empty()
+        || !sketch.links.is_empty()
+        || !sketch.patterns.is_empty()
+        || !sketch.offsets.is_empty()
+        || !sketch.freeform_offsets.is_empty()
+        || !sketch.freeform_chain_offsets.is_empty()
+        || !sketch.wires.is_empty()
+        || !sketch.wire_constraints.is_empty()
+        || !sketch.equations.is_empty()
+        || sketch.view.three_d
+    {
+        return Err(invalid("profile snapshot must contain fixed 2D geometry without references or constraints"));
+    }
+    let mut ids = std::collections::HashSet::new();
+    for point in &sketch.points {
+        if point.id.is_empty()
+            || point.id.len() > 128
+            || !ids.insert(point.id.as_str())
+            || !point.fixed
+            || point.link.is_some()
+            || point.exprs.is_some()
+            || point.construction
+            || !within_profile_size(point.pos.x)
+            || !within_profile_size(point.pos.y)
+        {
+            return Err(invalid("profile snapshot points must have unique ids and fixed finite coordinates in millimetres"));
+        }
+    }
+    for curve in &sketch.curves {
+        let supported = match curve.kind {
+            CurveKind::Line { .. } | CurveKind::Arc { .. } => true,
+            CurveKind::Circle { r, .. } => r > 0.0 && within_profile_size(r),
+            _ => false,
+        };
+        if !supported
+            || curve.id.is_empty()
+            || curve.id.len() > 128
+            || !ids.insert(curve.id.as_str())
+            || !curve.fixed
+            || curve.construction
+            || curve.centerline
+            || curve.infinite
+            || curve.link.is_some()
+            || curve.spline_handle_of.is_some()
+            || curve.spline_control_polygon_of.is_some()
+            || curve.kind.point_ids().iter().any(|&p| p >= sketch.points.len())
+        {
+            return Err(invalid("profile snapshot curves must be fixed lines, circles or arcs with valid point references"));
+        }
+    }
+    Ok(())
 }
 
 /// One member: the member a `FrameMember` feature lays on one of its lines. A member is known by

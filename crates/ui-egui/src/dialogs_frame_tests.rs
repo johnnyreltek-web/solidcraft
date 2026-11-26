@@ -3376,3 +3376,68 @@ fn mounting_plate_dialog_requires_a_face_and_whole_hole_count() {
     plate.count = "4.5".into();
     assert!(apply_commands(&app, &dialog).unwrap_err().contains("whole number"));
 }
+
+#[test]
+fn library_profile_uses_native_groups_and_edits_without_a_second_placement_form() {
+    let mut app = frame_app();
+    let lines = frame_lines(&app);
+    let mut d = dialog_on(&mut app, &lines[..1]);
+    let before = app.session.doc.to_json();
+    let record = json!({"name":"My tube","category":"My profiles","profile":{"kind":"rect_tube","width":"2 in","height":"2 in","wall":"1/8 in"}});
+    let Kind::Frame(m) = &mut d.kind else { panic!("frame dialog") };
+    crate::frame_library::choose(m, &mut d.inputs, &record).unwrap();
+    assert_eq!(app.session.doc.to_json(), before, "choosing a profile only edits the form");
+    m.anchor = anchor_index(Anchor::Center).unwrap();
+    m.fit_ends = false;
+    m.add_group(&mut d.inputs);
+    d.inputs[0].items = vec![Sel::ExternalSketchCurve { sketch: sketch_id(&app, "Frame"), id: lines[1].clone() }];
+    m.anchor = anchor_index(Anchor::TopLeft).unwrap();
+    let c = apply_commands(&app, &d).unwrap();
+    assert_eq!(c.len(), 1);
+    assert_eq!(c[0].0, "frame.member");
+    assert_eq!(c[0].1["groups"].as_array().unwrap().len(), 2);
+    assert_eq!(c[0].1["profile"]["width"], "2 in");
+    run_all(&mut app, c);
+    let id = app.session.doc.features.last().unwrap().id;
+    let mut edited = edit_dialog(&app, id, None).unwrap();
+    assert_eq!(member(&mut edited).groups.len(), 2);
+    let Kind::Frame(m) = &mut edited.kind else { panic!("native edit") };
+    let mut resized = record;
+    resized["profile"]["width"] = json!("3 in");
+    crate::frame_library::choose(m, &mut edited.inputs, &resized).unwrap();
+    let c = apply_commands(&app, &edited).unwrap();
+    assert_eq!(c[0].0, "timeline.redefine");
+    run_all(&mut app, c);
+    assert_eq!(app.session.doc.features.last().unwrap().id, id);
+    assert_eq!(body_names(&app).len(), 2);
+}
+
+#[test]
+fn library_snapshot_has_native_hot_points_and_survives_edit_and_cancel() {
+    let mut app = frame_app();
+    let lines = frame_lines(&app);
+    let mut d = dialog_on(&mut app, &lines[..1]);
+    let original = app.session.doc.to_json();
+    let record = json!({"name":"Saved ring","category":"Custom","sketch":{
+        "points":[{"id":"origin","pos":[0,0],"fixed":true}],
+        "curves":[{"id":"c1","type":"circle","c":0,"r":10,"fixed":true},{"id":"c2","type":"circle","c":0,"r":5,"fixed":true}],"constraints":[]}});
+    let Kind::Frame(m) = &mut d.kind else { panic!("frame dialog") };
+    crate::frame_library::choose(m, &mut d.inputs, &record).unwrap();
+    let p = shown_params(&app, m, &d.inputs, &d.extra).unwrap();
+    let view = crate::place_gizmo::frame_anchor::section_view(&app, &p).unwrap();
+    assert_eq!(view.regions.len(), 1);
+    assert_eq!(view.regions[0].holes.len(), 1);
+    assert_eq!(app.session.doc.to_json(), original, "choosing and locating is cancel-safe");
+    let c = apply_commands(&app, &d).unwrap();
+    assert_eq!(c.len(), 1);
+    run_all(&mut app, c);
+    let id = app.session.doc.features.last().unwrap().id;
+    let mut edited = edit_dialog(&app, id, None).unwrap();
+    assert_eq!(member(&mut edited).library.snapshot.as_ref().unwrap()["name"], "Saved ring");
+    member(&mut edited).angle = "45 deg".into();
+    let c = apply_commands(&app, &edited).unwrap();
+    assert_eq!(c[0].0, "timeline.redefine");
+    run_all(&mut app, c);
+    assert_eq!(app.session.doc.features.len(), 3, "only the two original sketches and the frame");
+    assert_eq!(body_names(&app).len(), 1);
+}

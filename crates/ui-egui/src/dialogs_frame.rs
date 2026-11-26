@@ -119,6 +119,7 @@ pub struct Group {
 /// The Frame Member dialog's values (the picks are its selection inputs).
 #[derive(Clone, Debug)]
 pub struct Member {
+    pub library: crate::frame_library::State,
     /// Every line of the frame sketch, now and as lines are added, not only the lines picked.
     pub all: bool,
     /// The picked curves, in pick order, make one continuous member along a tangent path.
@@ -479,6 +480,7 @@ impl Member {
         // A rectangular tube is the most common member.
         let kind = frame::profile_kinds().iter().position(|k| k.kind == "rect_tube").unwrap_or(0);
         Member {
+            library: Default::default(),
             all: false,
             continuous: false,
             kind,
@@ -1279,6 +1281,7 @@ fn member_rows(app: &SolveApp, ui: &mut egui::Ui, m: &mut Member, inputs: &mut [
         form_row(ui, "All Lines", |ui| check(ui, &mut m.all));
     }
     group_rows(ui, m, inputs);
+    crate::frame_library::rows(app, ui, m, inputs);
     let continuous_label = app.tr("ui.frame.continuous").to_string();
     form_row(ui, &continuous_label, |ui| check(ui, &mut m.continuous));
     let picked = !crate::selection::items(inputs, 1).is_empty();
@@ -1289,6 +1292,10 @@ fn member_rows(app: &SolveApp, ui: &mut egui::Ui, m: &mut Member, inputs: &mut [
         if !on {
             m.whole = None;
         }
+    } else if !picked && m.library.snapshot.is_some() {
+        form_row(ui, "Section", |ui| {
+            ui.label(m.library.snapshot.as_ref().and_then(|s| s.get("name")).and_then(Value::as_str).unwrap_or_default());
+        });
     } else if !picked {
         let kinds = frame::profile_kinds();
         let labels: Vec<&str> = kinds.iter().map(|k| k.label).collect();
@@ -1630,6 +1637,8 @@ fn flat_commands(app: &SolveApp, m: &Member, inputs: &[SelInput], extra: &Map<St
         if !section.is_empty() {
             p["profiles"] = json!(section.iter().map(|x| x.1).collect::<Vec<_>>());
         }
+    } else if let Some(snapshot) = &m.library.snapshot {
+        p["profile_snapshot"] = snapshot.clone();
     } else {
         let kinds = frame::profile_kinds();
         let (k, values) = kinds.get(m.kind).zip(m.dims.get(m.kind)).ok_or("choose a profile")?;
@@ -1823,6 +1832,9 @@ pub fn for_feature(app: &SolveApp, feature: &solidcraft_engine::doc::Feature) ->
         i.items = items;
     }
     match profile {
+        MemberProfile::Snapshot { name, sketch } => {
+            m.library.snapshot = Some(json!({"name":name,"sketch":sketch}));
+        }
         MemberProfile::Library { profile } => {
             let kinds = frame::profile_kinds();
             if let Some((index, k)) = kinds.iter().enumerate().find(|(_, k)| k.kind == profile.kind)

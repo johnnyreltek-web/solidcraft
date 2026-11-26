@@ -313,6 +313,112 @@ fn requested_forms_keep_the_dispatch_revision_across_edits_and_deferred_replies(
 }
 
 #[test]
+fn panel_requested_forms_keep_the_dispatch_design_and_revision() {
+    for destination in ["same", "switch", "closed"] {
+        let mut h = box_and_pick_plugin();
+        let session = h.app.session.uid;
+        let queued_revision = h.app.session.design_revision();
+        run_panel(&mut h.app, "inserts.seats".into(), json!({})).unwrap();
+        let request = h.app.control_held.pop_front().unwrap();
+        h.app.run("solid.box", json!({"length":1,"width":1,"height":1})).unwrap();
+        check_dispatch(&mut h.app, &request).unwrap();
+        let dispatched = h.app.session.design_revision();
+        assert_ne!(queued_revision, dispatched);
+        assert_eq!(h.app.plugin_menu.panel_runs[0].running.source_guard.as_ref().unwrap().revision, dispatched);
+        assert!(take_interactive_run(&mut h.app, request.serial));
+        h.app.run("solid.box", json!({"length":2,"width":1,"height":1})).unwrap();
+        request.reply.send(json!({"ok":true,"result":{"forms":[{"plugin":"inserts","entry":"seats","params":{"depth":7}}]}})).unwrap();
+        if destination != "same" {
+            crate::documents::open_tab(&mut h.app, solidcraft_engine::Session::default()).unwrap();
+            poll(&mut h.app);
+            assert!(h.app.plugin_menu.dialogs.is_empty(), "a panel never opens a form on the wrong design");
+            assert!(h.app.plugin_menu.panel_runs[0].running.received.is_some());
+            if destination == "closed" {
+                crate::documents::close(&mut h.app, 0, true);
+                poll(&mut h.app);
+                assert!(h.app.plugin_menu.panel_runs.is_empty() && h.app.plugin_menu.dialogs.is_empty(), "closed designs discard deferred forms");
+                continue;
+            }
+            crate::documents::switch(&mut h.app, 0);
+        }
+        poll(&mut h.app);
+        let dialog = h.app.plugin_menu.dialog().unwrap();
+        assert_eq!(dialog.session, session);
+        assert_eq!(dialog.form_guard.as_ref().unwrap().revision, dispatched);
+        assert!(dialog.changed, "the form asks for review after an intervening design change");
+        assert!(h.app.plugin_menu.panel_runs.is_empty());
+    }
+}
+
+#[test]
+fn panel_requests_queued_for_another_design_cannot_dispatch() {
+    let mut h = box_and_pick_plugin();
+    run_panel(&mut h.app, "inserts.seats".into(), json!({})).unwrap();
+    let request = h.app.control_held.pop_front().unwrap();
+    crate::documents::open_tab(&mut h.app, solidcraft_engine::Session::default()).unwrap();
+    assert!(check_dispatch(&mut h.app, &request).is_err());
+    assert!(!take_interactive_run(&mut h.app, request.serial));
+    request.reply.send(json!({"ok":false,"error":"another design"})).unwrap();
+    poll(&mut h.app);
+    assert!(h.app.plugin_menu.panel_runs.is_empty() && h.app.plugin_menu.dialogs.is_empty());
+}
+
+#[test]
+fn only_panel_reads_without_inputs_activate_without_a_dialog() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.plugin_menu.listed = vec![listed("library", vec![entry("manage", "read", json!([]))])];
+    let panel: solidcraft_engine::plugin::ui::Declarations = serde_json::from_value(json!({
+        "ui_version":1,"panels":[{"id":"library","title":"Profiles","zones":["right"],
+            "layout":{"root":0,"nodes":[{"widget":{"text":"Profiles"}}]}}]
+    }))
+    .unwrap();
+    h.app.session.plugin_state.panels.insert(
+        "library".into(),
+        solidcraft_engine::plugin::PanelPackage {
+            name: "Library".into(),
+            approval: String::new(),
+            declarations: panel,
+            data: Default::default(),
+            visible: Default::default(),
+            visibility_revision: Default::default(),
+        },
+    );
+    activate_entry(&mut h.app, 0, 0);
+    assert!(h.app.plugin_menu.dialogs.is_empty(), "a panel launcher asks for no redundant Run click");
+    let request = h.app.control_held.pop_front().unwrap();
+    assert_eq!(request.params["command"], "plugin.run");
+    assert_eq!(request.params["params"]["entry"], "manage");
+    assert_eq!(request.params["params"]["params"], json!({}));
+    assert_eq!(request.params["params"]["approval"], h.app.plugin_menu.listed[0].approval);
+    assert!(take_interactive_run(&mut h.app, request.serial));
+    h.app.plugin_menu.panel_runs.clear();
+
+    for reason in ["no panel", "edit", "hook", "field", "importer", "missing grant"] {
+        let mut entry = entry("manage", "read", json!([]));
+        let plugin = &mut h.app.plugin_menu.listed[0];
+        plugin.groups.clear();
+        let panel = h.app.session.plugin_state.panels.get_mut("library").unwrap();
+        panel.approval = String::new();
+        match reason {
+            "no panel" => panel.approval = "another package".into(),
+            "edit" => entry.effect = solidcraft_engine::plugin::Effect::Edit,
+            "hook" => entry.dialog_hook = true,
+            "field" => entry.input_schema = json!({"type":"object","properties":{"name":{"type":"string"}}}),
+            "importer" => entry.kind = solidcraft_engine::plugin::EntryKind::Importer,
+            "missing grant" => {
+                plugin.groups.insert("file".into());
+            }
+            _ => unreachable!(),
+        }
+        plugin.entries[0] = entry;
+        activate_entry(&mut h.app, 0, 0);
+        assert_eq!(h.app.plugin_menu.dialogs.len(), 1, "{reason}: keep the ordinary form");
+        assert!(h.app.control_held.is_empty(), "{reason}: opening the form executes nothing");
+        h.app.plugin_menu.dialogs.clear();
+    }
+}
+
+#[test]
 fn corrected_raw_selection_preserves_picker_field_identity() {
     let mut h = box_and_pick_plugin();
     h.app.plugin_menu.listed[0].entries[0].input_schema["properties"]["edges"]["minItems"] = json!(0);
@@ -2119,6 +2225,39 @@ fn multiple_entries_without_ribbon_groups_keep_the_original_buttons() {
 }
 
 #[test]
+fn explicit_ribbon_placements_hide_helper_buttons_but_preserve_pins() {
+    let multiple = entry("library", "read", json!([{"kind":"ribbon","name":"Other"},{"kind":"ribbon","name":" model "}]));
+    assert!(ribbon_tab_slot(&multiple), "all slots are considered, including explicit Model placement");
+    let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+    app.plugin_menu.listed = vec![listed(
+        "profile-library",
+        vec![
+            entry("library", "read", json!([{"kind":"menu","name":"Manage Profiles"},{"kind":"ribbon","name":"Weldments"}])),
+            entry("save-profile", "edit", json!([{"kind":"menu","name":"Add Size"}])),
+            entry("catalog", "read", json!([])),
+        ],
+    )];
+    let buttons = ribbon_buttons(&app);
+    assert_eq!(buttons.len(), 1);
+    assert_eq!(buttons[0].id, "plugin_entry:profile-library:library");
+    assert_eq!(buttons[0].label, "Manage Profiles", "the tab name is a destination, not a button title");
+    assert_eq!(app.plugin_menu.listed[0].entries.len(), 3, "helper commands remain callable");
+    for pin in ["profile-library.save-profile", "plugin_entry:profile-library:save-profile"] {
+        app.toolbar_custom.load(&json!({"version":4,"panels":{"DESIGN/MODEL/CREATE":[pin]}}));
+        let buttons = ribbon_buttons(&app);
+        assert_eq!(buttons.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["Manage Profiles", "Add Size"]);
+    }
+}
+
+#[test]
+fn legacy_ribbon_labels_do_not_hide_unplaced_commands() {
+    let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+    app.plugin_menu.listed =
+        vec![listed("hardware", vec![entry("metric", "read", json!([{"kind":"ribbon","name":"Metric"}])), entry("inch", "read", json!([]))])];
+    assert_eq!(ribbon_buttons(&app).iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["Metric", "inch"]);
+}
+
+#[test]
 fn ribbon_group_button_and_arrow_open_the_dropdown_and_selection_opens_the_entry_dialog() {
     let mut h = crate::scenario::Harness::new();
     h.call("ui.resize", json!({"width":2400.0,"height":900.0}));
@@ -3111,6 +3250,15 @@ mod native {
         assert!(opened.form_guard.is_some());
         assert_eq!(opened.ready(&h.app).unwrap(), json!({"length":20.0,"width":10.0,"height":3.0}));
         assert_eq!(h.app.session.doc, before);
+        h.app.plugin_menu.dialogs.clear();
+        run_panel(&mut h.app, "plugin.run".into(), json!({"path":plugin.path,"approval":plugin.approval,"entry":"choose","params":{}})).unwrap();
+        settle(&mut h);
+        checked_prefill(&h.app);
+        let opened = h.app.plugin_menu.dialog().expect("the same guest request opens from a panel action");
+        assert_eq!(opened.entry, "edit");
+        assert!(opened.form_guard.is_some());
+        assert_eq!(opened.ready(&h.app).unwrap(), json!({"length":20.0,"width":10.0,"height":3.0}));
+        assert_eq!(h.app.session.doc, before, "opening a panel's requested form changes no geometry");
         let _ = std::fs::remove_dir_all(root);
     }
 
