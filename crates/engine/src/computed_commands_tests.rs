@@ -31,6 +31,44 @@ fn acceptance_preserves_file_history_and_prepared_world_without_evaluation() {
 }
 
 #[test]
+fn a_computed_read_preserves_the_live_view_revision_including_later_visibility() {
+    for hide_while_reading in [false, true] {
+        let mut session = Session::default();
+        session.execute("solid.box", &json!({"length":2,"width":3,"height":4,"body_name":"Block"})).unwrap();
+        let document = session.doc.clone();
+        let world = session.world_state().unwrap();
+        let prepared = session.scratch().compute_commands(&[("inspect.measure".into(), json!({}))], None).unwrap();
+        if hide_while_reading {
+            session.execute("browser.visibility", &json!({"items":["Block"],"visible":false})).unwrap();
+        }
+        let revision = session.revision;
+        let history = session.undo.len();
+        assert!(prepared.is_current(&session), "a live visibility change does not stale the read");
+        let replies = session.accept_commands(prepared).unwrap();
+        assert_eq!(replies[0].0, "inspect.measure");
+        assert!((replies[0].1["total"]["volume_mm3"].as_f64().unwrap() - 24.0).abs() < 1e-8);
+        assert!(Arc::ptr_eq(&document, &session.doc));
+        assert!(Arc::ptr_eq(&world, &session.world_state().unwrap()));
+        assert_eq!(session.undo.len(), history);
+        assert_eq!(session.body_visible("Block"), !hide_while_reading);
+        assert_eq!(session.revision, revision, "an unchanged read must neither invalidate the view nor roll back its newer revision");
+    }
+}
+
+#[test]
+fn a_computed_selection_change_still_invalidates_the_view() {
+    let mut session = Session::default();
+    session.execute("solid.box", &json!({"length":2,"width":3,"height":4,"body_name":"Block"})).unwrap();
+    let document = session.doc.clone();
+    let revision = session.revision;
+    let prepared = session.scratch().compute_commands(&[("select.set".into(), json!({"items":[{"type":"body","name":"Block"}]}))], None).unwrap();
+    session.accept_commands(prepared).unwrap();
+    assert!(Arc::ptr_eq(&document, &session.doc), "the selection changes only the view");
+    assert_eq!(session.selection, vec![crate::Sel::Body { name: "Block".into() }]);
+    assert!(session.revision > revision, "a real view change still invalidates its consumers");
+}
+
+#[test]
 fn prepared_preview_includes_visibility_and_command_replies() {
     let mut session = Session::default();
     session.execute("solid.box", &json!({"length":1,"width":1,"height":1,"body_name":"Hidden"})).unwrap();

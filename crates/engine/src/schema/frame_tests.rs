@@ -94,6 +94,17 @@ fn profile_snapshot_schema_and_strict_execution_accept_one_fixed_section_source(
     let params = json!({"sketch":"Frame","lines":[lines[0]],"profile_snapshot":snapshot});
     let schema = input_schema_for::<FrameMemberParams>();
     assert!(conforms(schema.as_value(), schema.as_value(), &params));
+    let mut boundary = params.clone();
+    let curve = boundary["profile_snapshot"]["sketch"]["curves"][0].clone();
+    let point = boundary["profile_snapshot"]["sketch"]["points"][0].clone();
+    boundary["profile_snapshot"]["sketch"]["curves"] = json!(vec![curve.clone(); 512]);
+    boundary["profile_snapshot"]["sketch"]["points"] = json!(vec![point.clone(); 1537]);
+    assert!(conforms(schema.as_value(), schema.as_value(), &boundary), "schema admits the validator's upper limits");
+    boundary["profile_snapshot"]["sketch"]["curves"].as_array_mut().unwrap().push(curve);
+    assert!(!conforms(schema.as_value(), schema.as_value(), &boundary), "513 curves exceed the schema limit");
+    boundary["profile_snapshot"]["sketch"]["curves"].as_array_mut().unwrap().pop();
+    boundary["profile_snapshot"]["sketch"]["points"].as_array_mut().unwrap().push(point);
+    assert!(!conforms(schema.as_value(), schema.as_value(), &boundary), "1538 points exceed the schema limit");
     s.execute("frame.member", &params).unwrap();
     for key in ["profile", "profile_sketch"] {
         let mut both = params.clone();

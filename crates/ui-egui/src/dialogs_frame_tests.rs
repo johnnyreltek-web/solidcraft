@@ -3397,11 +3397,17 @@ fn library_profile_uses_native_groups_and_edits_without_a_second_placement_form(
     assert_eq!(c[0].0, "frame.member");
     assert_eq!(c[0].1["groups"].as_array().unwrap().len(), 2);
     assert_eq!(c[0].1["profile"]["width"], "2 in");
+    assert!(
+        c[0].1["groups"].as_array().unwrap().iter().all(|group| group.get("library_browser").is_none()),
+        "browsing filters never enter the document command"
+    );
     run_all(&mut app, c);
     let id = app.session.doc.features.last().unwrap().id;
     let mut edited = edit_dialog(&app, id, None).unwrap();
     assert_eq!(member(&mut edited).groups.len(), 2);
     let Kind::Frame(m) = &mut edited.kind else { panic!("native edit") };
+    assert_eq!(m.library.browser, crate::frame_library::Browser::default(), "saved groups derive their filters when shown");
+    assert!(m.groups.iter().all(|g| g.library_browser == crate::frame_library::Browser::default()));
     let mut resized = record;
     resized["profile"]["width"] = json!("3 in");
     crate::frame_library::choose(m, &mut edited.inputs, &resized).unwrap();
@@ -3440,4 +3446,99 @@ fn library_snapshot_has_native_hot_points_and_survives_edit_and_cancel() {
     run_all(&mut app, c);
     assert_eq!(app.session.doc.features.len(), 3, "only the two original sketches and the frame");
     assert_eq!(body_names(&app).len(), 1);
+}
+
+/// Two groups with one rail each; remaining rails are clicked away from their snap points.
+fn frame_path_mouse_fixture() -> (crate::scenario::Harness, [egui::Pos2; 2], Vec<Sel>) {
+    let mut h = crate::scenario::Harness::new();
+    h.app.home.open = false;
+    for (id, params) in frame_commands().into_iter().take(3) {
+        h.app.run(id, params).unwrap();
+    }
+    h.app.ui.show_browser = false;
+    h.app.ui.show_timeline = false;
+    h.app.set_origin_shown(false);
+    h.call("ui.resize", json!({"width":1600,"height":1000}));
+    h.call("ui.view", json!({"view":"top"}));
+    h.call("ui.camera", json!({"target":[650,200,0],"distance":1600}));
+    let lines = frame_lines(&h.app);
+    let sid = sketch_id(&h.app, "Frame");
+    let mut d = dialog_on(&mut h.app, &lines[..1]);
+    let Kind::Frame(m) = &mut d.kind else { panic!("frame dialog") };
+    m.corner = NONE;
+    m.fit_ends = false;
+    m.add_group(&mut d.inputs);
+    d.inputs[0].items = vec![Sel::ExternalSketchCurve { sketch: sid, id: lines[1].clone() }];
+    h.app.dialog = Some(d);
+    h.frames_after_preview(5);
+    let at = crate::scenario::rect_of("dialog:field:Path").unwrap().center();
+    h.frame_with(crate::test_support::pointer(at, true));
+    h.frame_with(crate::test_support::pointer(at, false));
+    h.frames(3);
+    assert_eq!(h.app.dialog.as_ref().unwrap().active, 0);
+    let mut points = Vec::new();
+    for index in [2, 3] {
+        let sk = h.app.session.doc.sketch(sid).unwrap();
+        let curve = sk.curves.iter().find(|curve| curve.id == lines[index]).unwrap();
+        let (a, b) = curve.kind.ends().unwrap();
+        let on_line = sk.points[a].pos * 0.63 + sk.points[b].pos * 0.37;
+        let [x, y] = h.at(&json!({"world":[on_line.x,on_line.y,0]})).unwrap();
+        let point = egui::pos2(x as f32, y as f32);
+        assert!(!h.app.viewport.dialog_rect.unwrap().contains(point), "fixture line is outside the form");
+        let proj = crate::viewport::projection(&h.app, h.app.viewport.rect.unwrap());
+        let candidates: Vec<_> = crate::viewport::pick(&h.app, &proj, point)
+            .iter()
+            .filter_map(|hit| h.app.dialog.as_ref().unwrap().candidate(&h.app.session, hit))
+            .collect();
+        assert!(candidates.contains(&Sel::ExternalSketchCurve { sketch: sid, id: lines[index].clone() }));
+        points.push(point);
+    }
+    let expected = lines[1..].iter().map(|id| Sel::ExternalSketchCurve { sketch: sid, id: id.clone() }).collect();
+    (h, [points[0], points[1]], expected)
+}
+
+fn frame_path_mouse_click(at: egui::Pos2) -> Vec<egui::Event> {
+    let mut events = crate::test_support::pointer(at, true);
+    events.extend(crate::test_support::pointer(at, false));
+    events
+}
+
+fn assert_frame_path_after_queued_input(h: &mut crate::scenario::Harness, expected: &[Sel]) {
+    // Physical clicks queued during one slow frame are replayed before judging the preview.
+    h.frames(4);
+    let before_preview = h.app.dialog.as_ref().unwrap().inputs[0].items.clone();
+    assert_eq!(before_preview, expected, "every released click must reach its own line");
+    h.frames_after_preview(6);
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[0].items, expected, "an older preview cannot undo newer picks");
+    assert!(h.app.preview.error.is_none(), "{:?}", h.app.preview.error);
+}
+
+#[test]
+fn frame_path_preserves_two_mouse_clicks_queued_in_one_frame() {
+    let (mut h, points, expected) = frame_path_mouse_fixture();
+    h.frame_with(vec![egui::Event::PointerMoved(points[0])]);
+    let mut events = frame_path_mouse_click(points[0]);
+    events.extend(frame_path_mouse_click(points[1]));
+    h.frame_with(events);
+    assert_frame_path_after_queued_input(&mut h, &expected);
+}
+
+#[test]
+fn frame_path_release_uses_its_line_before_later_pointer_motion() {
+    let (mut h, points, expected) = frame_path_mouse_fixture();
+    h.frame_with(vec![egui::Event::PointerMoved(points[0])]);
+    let mut events = frame_path_mouse_click(points[0]);
+    events.push(egui::Event::PointerMoved(points[1]));
+    h.frame_with(events);
+    assert_frame_path_after_queued_input(&mut h, &expected[..2]);
+}
+
+#[test]
+fn frame_path_accepts_quick_mouse_clicks_while_preview_catches_up() {
+    let (mut h, points, expected) = frame_path_mouse_fixture();
+    h.frame_with(vec![egui::Event::PointerMoved(points[0])]);
+    h.frame_with(frame_path_mouse_click(points[0]));
+    h.frame_with(vec![egui::Event::PointerMoved(points[1])]);
+    h.frame_with(frame_path_mouse_click(points[1]));
+    assert_frame_path_after_queued_input(&mut h, &expected);
 }

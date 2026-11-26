@@ -105,6 +105,7 @@ const SAME_LOCATE: f64 = 1e-5;
 /// A group of lines and how its members sit on them, while another group is shown.
 #[derive(Clone, Debug, Default)]
 pub struct Group {
+    pub library_browser: crate::frame_library::Browser,
     pub lines: Vec<Sel>,
     pub anchor: usize,
     /// The located profile point (`frame.member`'s `locate`), shown as Offset A and B while the
@@ -566,7 +567,15 @@ impl Member {
     /// The shown group as it stands, its lines from the Lines input.
     fn shown(&self, inputs: &[SelInput]) -> Group {
         let lines = crate::selection::items(inputs, 0).to_vec();
-        Group { lines, anchor: self.anchor, locate: self.locate, angle: self.angle.clone(), mirror: self.mirror, name: self.name.clone() }
+        Group {
+            library_browser: self.library.browser,
+            lines,
+            anchor: self.anchor,
+            locate: self.locate,
+            angle: self.angle.clone(),
+            mirror: self.mirror,
+            name: self.name.clone(),
+        }
     }
 
     /// Every group as it stands, the shown one included (none is while `current` is past the end).
@@ -590,6 +599,7 @@ impl Member {
         self.angle = g.angle;
         self.mirror = g.mirror;
         self.name = g.name;
+        self.library.browser = g.library_browser;
         // Offset A and B are worked out again from this group's `locate` (`sync_offset`), so the
         // last group's typed offset is not applied to this one.
         self.offset = Default::default();
@@ -1299,7 +1309,8 @@ fn member_rows(app: &SolveApp, ui: &mut egui::Ui, m: &mut Member, inputs: &mut [
     } else if !picked {
         let kinds = frame::profile_kinds();
         let labels: Vec<&str> = kinds.iter().map(|k| k.label).collect();
-        choice_row(ui, "Profile", "frame_profile", &mut m.kind, &labels);
+        let label = if crate::frame_library::available(app) { "ui.frame_library.shape" } else { "Profile" };
+        choice_row(ui, label, "frame_profile", &mut m.kind, &labels);
         if let (Some(k), Some(values)) = (kinds.get(m.kind), m.dims.get_mut(m.kind)) {
             for (i, (name, v)) in k.required.iter().chain(k.optional).zip(values.iter_mut()).enumerate() {
                 let label = frame::dimension_label(name);
@@ -1922,6 +1933,7 @@ pub fn for_feature(app: &SolveApp, feature: &solidcraft_engine::doc::Feature) ->
             .map(|g| {
                 let ids = if g.lines.is_empty() { frame::member_line_ids(&st, kind).unwrap_or_default() } else { g.lines.clone() };
                 Group {
+                    library_browser: Default::default(),
                     lines: ids.into_iter().map(|id| Sel::ExternalSketchCurve { sketch: path.0, id }).collect(),
                     anchor: anchor_index(g.anchor).unwrap_or(0),
                     locate: g.locate,

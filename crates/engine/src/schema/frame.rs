@@ -82,10 +82,10 @@ impl JsonSchema for ProfileSnapshotParam {
                 "name": {"type": "string", "minLength": 1, "maxLength": 128},
                 "sketch": {
                     "type": "object", "required": ["points", "curves", "constraints"],
-                    "description": "Fixed 2D sketch snapshot in millimetres: 1–256 lines, circles or arcs, no expressions or external references.",
+                    "description": "Fixed 2D sketch snapshot in millimetres: 1–512 lines, circles or arcs, no expressions or external references.",
                     "properties": {
-                        "points": {"type": "array", "minItems": 1, "maxItems": 769, "items": {"type": "object"}},
-                        "curves": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"type": "object"}},
+                        "points": {"type": "array", "minItems": 1, "maxItems": 1537, "items": {"type": "object"}},
+                        "curves": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"type": "object"}},
                         "constraints": {"type": "array", "maxItems": 0}
                     }
                 }

@@ -3782,6 +3782,26 @@ impl Session {
         if !self.plugin_state.user.defer_user_settings {
             prepared.computed.plugin_state.publish_user_settings()?;
         }
+        // Catalog and panel reads still publish their data and settings, but do not
+        // invalidate an unchanged model preview. Only command-driven transactions
+        // with no document, history or view effects qualify; direct computed edits
+        // keep accept_computed's unconditional invalidation.
+        let keep_view_revision = prepared.editor_original.is_none()
+            && prepared.steps.iter().all(|step| !step.changed)
+            && prepared.computed.same_document_context(&prepared.source)
+            && prepared.computed.revision == prepared.source.revision
+            && prepared.computed.visibility == prepared.source.visibility
+            && prepared.computed.selection == prepared.source.selection
+            && prepared.computed.selection_all_bodies == prepared.source.selection_all_bodies
+            && prepared.computed.selection == self.selection
+            && prepared.computed.selection_all_bodies == self.selection_all_bodies
+            && prepared.computed.exploded == prepared.source.exploded
+            && prepared.computed.exploded == self.exploded
+            && prepared.computed.undo.is_empty()
+            && prepared.computed.redo.is_empty()
+            && prepared.computed.sketch_finish_events.is_empty()
+            && prepared.computed.edit_start_sequence == 0;
+        let live_revision = self.revision;
         if let Some(original) = &prepared.editor_original {
             self.restore_editor_history(&prepared.source.doc, original);
         }
@@ -3828,6 +3848,10 @@ impl Session {
             .collect();
         let replies = prepared.steps.into_iter().map(|step| (step.id, step.reply)).collect();
         self.accept_computed(prepared.computed)?;
+        if keep_view_revision {
+            // Keep visibility changes made on the window while the read ran too.
+            self.revision = live_revision;
+        }
         for change in observations {
             if self.doc.links.get(&change.component).is_some_and(|link| link.path == change.path) {
                 plugin::record_link_change(self, change.component, change.path, change.digest, change.read);

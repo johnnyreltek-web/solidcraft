@@ -248,9 +248,22 @@ fn built(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut M
         fit_members(&segments, &regions, &placed, &ends, &fits, (&mut cut, &crossed, &mut dropped), (coped, gap))?;
         (cut, dropped, ends)
     };
-    // Each member's body; `None` for a piece left wholly inside the tubes it is fitted to.
+    // Uncut stock is independent too: complex library sections otherwise repeat their
+    // full extrusion serially for every path. Use the same bounded dispatcher as the
+    // corner cuts, including its validation/cancellation scopes and serial wasm path.
+    let uncut: Vec<usize> = (0..segments.len()).filter(|&m| dropped.get(m) != Some(&true) && cut.get(m).is_none_or(Option::is_none)).collect();
+    let results = kernel::map_on_threads(&uncut, 4, |&m| -> Result<Traced> {
+        let (id, a, b) = segments.get(m).ok_or_else(|| DocError::Invalid(format!("no member {m}")))?;
+        let (x, y) = axes.get(m).copied().ok_or_else(|| DocError::Invalid(format!("line `{id}` has no length")))?;
+        let at = ats.get(m).copied().unwrap_or(at);
+        let plane = Plane::new(*a - x * at.x - y * at.y, x, y).ok_or_else(|| DocError::Invalid(format!("line `{id}`: no plane square to it")))?;
+        member_body(plane, unreversed(m, *a), &regions, *b - *a, (0.0, a.dist(*b)), id)
+    });
+    let mut results = results.into_iter();
+    // Preserve member order and the first error in that order, regardless of completion
+    // order. `None` is a piece left wholly inside the tubes it is fitted to.
     let mut made = Vec::with_capacity(segments.len());
-    for (m, (id, a, b)) in segments.iter().enumerate() {
+    for m in 0..segments.len() {
         if dropped.get(m) == Some(&true) {
             made.push(None);
             continue;
@@ -259,10 +272,8 @@ fn built(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut M
             made.push(Some(t));
             continue;
         }
-        let (x, y) = axes.get(m).copied().ok_or_else(|| DocError::Invalid(format!("line `{id}` has no length")))?;
-        let at = ats.get(m).copied().unwrap_or(at);
-        let plane = Plane::new(*a - x * at.x - y * at.y, x, y).ok_or_else(|| DocError::Invalid(format!("line `{id}`: no plane square to it")))?;
-        made.push(Some(member_body(plane, unreversed(m, *a), &regions, *b - *a, (0.0, a.dist(*b)), id)?));
+        let result = results.next().flatten().unwrap_or_else(|| Err(kernel::KernelError::Internal("frame member worker failed".into()).into()));
+        made.push(Some(result?));
     }
     // A point in the section's material (a tube's wall, not its bore), half way along member m.
     let inside = regions.first().map(|r| r.interior_point()).ok_or_else(|| DocError::Invalid("the member profile has no area".into()))?;

@@ -421,8 +421,8 @@ pub fn validate_snapshot(name: &str, sketch: &solidcraft_sketch::Sketch) -> Resu
     if name.trim().is_empty() || name.len() > 128 || name.chars().any(char::is_control) {
         return Err(invalid("profile snapshot name must contain 1–128 printable bytes"));
     }
-    if sketch.curves.is_empty() || sketch.curves.len() > 256 || sketch.points.is_empty() || sketch.points.len() > 769 {
-        return Err(invalid("profile snapshot needs 1–256 curves and at most 769 points"));
+    if sketch.curves.is_empty() || sketch.curves.len() > 512 || sketch.points.is_empty() || sketch.points.len() > 1537 {
+        return Err(invalid("profile snapshot needs 1–512 curves and at most 1537 points"));
     }
     if !sketch.constraints.is_empty()
         || !sketch.links.is_empty()

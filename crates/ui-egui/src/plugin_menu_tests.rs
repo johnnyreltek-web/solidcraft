@@ -2196,13 +2196,11 @@ fn native_frame_catalog_pins_package_approval_and_only_reloads_on_refresh() {
     assert!(data.merge_frame());
     assert_eq!(*data, pending, "adoption changes visible values but preserves logical equality");
     paint(&h.app, Vec::new());
-    let at = crate::scenario::rect_of("dialog:widget:ui.frame_library.label").expect("native profile picker").center();
+    let at = crate::scenario::rect_of("dialog:widget:ui.frame_library.profile").expect("native profile picker").center();
     paint(&h.app, crate::test_support::pointer(at, true));
     paint(&h.app, crate::test_support::pointer(at, false));
     paint(&h.app, Vec::new());
-    let at = crate::scenario::rect_of("dialog:ui.frame_library.label:Steel / Tube 2")
-        .expect("adopted Tube 2 appears before opening Manage Profiles")
-        .center();
+    let at = crate::scenario::handle_at("dialog:ui.frame_library.profile:Tube 2").expect("adopted Tube 2 appears before opening Manage Profiles");
     paint(&h.app, crate::test_support::pointer(at, true));
     paint(&h.app, crate::test_support::pointer(at, false));
     paint(
@@ -3153,6 +3151,103 @@ mod native {
         crate::documents::open_tab(&mut h.app, other).unwrap();
         let panels: Vec<String> = h.app.session.plugin_panels().iter().map(|p| p.plugin.clone()).collect();
         assert_eq!(panels, ["sample"]);
+    }
+
+    fn start_native_frame_preview(h: &mut crate::scenario::Harness) {
+        for (command, params) in [
+            ("sketch.create", json!({"plane":"XY","name":"Frame"})),
+            ("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[600,400]})),
+            ("sketch.finish", json!({})),
+        ] {
+            h.app.run(command, params).unwrap();
+        }
+        let sketch = h.app.session.doc.find_feature("Frame").unwrap().id;
+        h.app.session.selection = h
+            .app
+            .session
+            .doc
+            .sketch(sketch)
+            .unwrap()
+            .curves
+            .iter()
+            .map(|curve| solidcraft_engine::Sel::SketchCurve { id: curve.id.clone(), sketch: Some(sketch) })
+            .collect();
+        h.app.start("frame.member");
+        h.frames_after_preview(4);
+        assert!(h.app.preview.active && !h.app.preview.busy && h.app.preview.error.is_none());
+    }
+
+    /// Refreshing library data uses this same read-only panel worker. The open native
+    /// feature's solid preview must stay visible, and unchanged geometry needs no new job.
+    #[test]
+    fn a_read_only_panel_refresh_preserves_the_native_frame_preview() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        let folder = h.dir.join("sample");
+        write_panel_plugin(&folder);
+        h.app.session.plugin_state.plugins_dir = Some(h.dir.clone());
+        let inspected = h.app.run("plugin.inspect", json!({"path":folder.to_string_lossy()})).unwrap();
+        start_native_frame_preview(&mut h);
+        let preview_key = h.app.preview.key;
+        let before = h.app.session.doc.clone();
+        let commands = crate::dialogs::apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+
+        let (release, gate) = std::sync::mpsc::channel();
+        h.app.apply_gate = Some(std::sync::Arc::new(std::sync::Mutex::new(gate)));
+        run_panel(
+            &mut h.app,
+            "plugin.run".into(),
+            json!({
+                "path":folder.to_string_lossy(),"approval":inspected["approval"],"entry":"make","params":{}
+            }),
+        )
+        .unwrap();
+        h.frames(3);
+        let visible_during_read = h.app.preview.active && !h.app.preview.rolled_back && h.app.preview.key == preview_key;
+        // Release the worker before asserting, including on an unfixed build.
+        release.send(()).unwrap();
+        h.app.apply_gate = None;
+        settle(&mut h);
+        h.frames_after_preview(3);
+        assert_eq!(
+            h.app.session.plugin_panels()[0].data.get("/jobs/0/state"),
+            Some(&solidcraft_engine::plugin::ui::UiValue::Text("ready".into())),
+            "the refreshed data still lands"
+        );
+        assert!(std::sync::Arc::ptr_eq(&before, &h.app.session.doc), "a panel read does not replace the design");
+        assert_eq!(crate::dialogs::apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap(), commands);
+        assert!(visible_during_read, "refresh must not hide the open frame's solid preview while the catalog is loading");
+        assert!(h.app.preview.active && !h.app.preview.busy && h.app.preview.error.is_none());
+        assert_eq!(h.app.preview.key, preview_key, "unchanged frame geometry must not rebuild after a read-only panel refresh");
+    }
+
+    #[test]
+    fn a_plugin_design_edit_invalidates_the_native_frame_preview() {
+        let root = package("frame-preview-invalidation");
+        let folder = root.join("boxes");
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.session.plugin_state.plugins_dir = Some(root.clone());
+        let inspected = h.app.run("plugin.inspect", json!({"path":folder.to_string_lossy()})).unwrap();
+        start_native_frame_preview(&mut h);
+        let preview_key = h.app.preview.key;
+        let before = h.app.session.doc.clone();
+        run_panel(
+            &mut h.app,
+            "plugin.run".into(),
+            json!({
+                "path":folder.to_string_lossy(),"approval":inspected["approval"],"entry":"make",
+                "params":{"length":20,"width":10,"height":3}
+            }),
+        )
+        .unwrap();
+        settle(&mut h);
+        h.frames_after_preview(3);
+        assert!(!std::sync::Arc::ptr_eq(&before, &h.app.session.doc), "the edit must commit through the same worker");
+        assert!(h.app.session.doc.features.len() > before.features.len());
+        assert!(h.app.preview.active && !h.app.preview.busy && h.app.preview.error.is_none());
+        assert_ne!(h.app.preview.key, preview_key, "changed model geometry must invalidate the existing preview");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
