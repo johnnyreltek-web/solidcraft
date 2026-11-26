@@ -31,6 +31,10 @@ pub(crate) fn tick(app: &mut SolveApp) {
     if !available(app) {
         return;
     }
+    let Some(plugin) = app.plugin_menu.listed.iter().find(|p| p.id == "profile-library" && p.entries.iter().any(|e| e.name == "catalog")) else {
+        return;
+    };
+    let params = json!({"path":plugin.path,"approval":plugin.approval,"entry":"catalog","params":{}});
     let Some(d) = app.dialog.as_mut() else { return };
     let Kind::Frame(m) = &mut d.kind else { return };
     if m.library.requested && !m.library.refresh {
@@ -38,7 +42,7 @@ pub(crate) fn tick(app: &mut SolveApp) {
     }
     m.library.requested = true;
     m.library.refresh = false;
-    if let Err(error) = crate::plugin_menu::run_panel(app, "profile-library.catalog".into(), json!({})) {
+    if let Err(error) = crate::plugin_menu::run_panel(app, "plugin.run".into(), params) {
         app.set_status(error, true);
     }
 }
@@ -120,7 +124,7 @@ pub(crate) fn rows(app: &SolveApp, ui: &mut egui::Ui, m: &mut Member, inputs: &m
     }
     // Recognize an existing feature once after the catalog arrives. An explicit choice of
     // Custom dimensions must stay selected even if its values still match a saved size.
-    if !m.library.matched && m.library.data.is_some() && m.library.selected.is_none() && m.library.snapshot.is_none() {
+    if !m.library.matched && !m.library.profiles.is_empty() && m.library.selected.is_none() && m.library.snapshot.is_none() {
         m.library.matched = true;
         let kinds = frame::profile_kinds();
         if let Some((kind, values)) = kinds.get(m.kind).zip(m.dims.get(m.kind)) {

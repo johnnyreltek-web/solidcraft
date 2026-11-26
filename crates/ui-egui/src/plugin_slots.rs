@@ -141,7 +141,15 @@ fn declared(plugin: &plugins::Plugin) -> Vec<Item> {
                 continue;
             }
             let title = match slot {
-                Slot::Ribbon(_) => crate::plugin_menu::command_title(plugin, entry),
+                Slot::Ribbon(_) => entry
+                    .slots
+                    .iter()
+                    .find_map(|slot| match slot {
+                        // File and Help declare host destinations, not command titles.
+                        UiSlot::Menu { name } if !name.trim().is_empty() && menu_name(name).is_none() => Some(name.trim().to_owned()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| entry.name.clone()),
                 Slot::Menu(_) => entry.name.clone(),
             };
             items.push(Item {
@@ -627,6 +635,12 @@ mod tests {
         assert_eq!(items[0].entry, "Manage Profiles");
         assert_eq!(items[0].label, "Profile Library · Manage Profiles");
         assert_eq!(items[0].slot, Slot::Ribbon("WELDMENTS"));
+        plugin.entries[0].slots = serde_json::from_value(json!([
+            {"kind":"menu","name":"File"}, {"kind":"ribbon","name":"Weldments"}
+        ]))
+        .unwrap();
+        let items = declared(&plugin);
+        assert!(items.iter().all(|item| item.label == "Profile Library · library"), "host menu destinations are not display titles");
         plugin.entries[0].slots.clear();
         assert!(declared(&plugin).is_empty());
     }

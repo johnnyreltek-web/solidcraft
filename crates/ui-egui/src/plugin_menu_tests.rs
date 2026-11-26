@@ -2131,6 +2131,69 @@ pub(crate) fn entry(name: &str, effect: &str, slots: Value) -> solidcraft_engine
     serde_json::from_value(json!({"name":name,"effect":effect,"input_schema":{"type":"object"},"slots":slots})).unwrap()
 }
 
+#[test]
+fn native_frame_catalog_pins_package_approval_and_only_reloads_on_refresh() {
+    let mut h = crate::scenario::Harness::new();
+    let mut plugin = listed("profile-library", vec![entry("catalog", "read", json!([]))]);
+    plugin.path = h.dir.join("profile-library").to_string_lossy().into_owned();
+    plugin.approval = "inspected-library-hash".into();
+    h.app.plugin_menu.listed = vec![plugin.clone()];
+    h.app.session.plugin_state.panels.insert(
+        plugin.id.clone(),
+        solidcraft_engine::plugin::PanelPackage {
+            name: plugin.name.clone(),
+            approval: plugin.approval.clone(),
+            declarations: serde_json::from_value(json!({"ui_version":1,"panels":[]})).unwrap(),
+            data: Default::default(),
+            visible: Default::default(),
+            visibility_revision: Default::default(),
+        },
+    );
+    h.app.start("frame.member");
+    let before = h.app.session.doc.clone();
+    for _ in 0..5 {
+        crate::frame_library::tick(&mut h.app);
+    }
+    assert_eq!(h.app.control_held.len(), 1, "opening a fresh native form queues one catalog read");
+    let request = h.app.control_held.pop_front().unwrap();
+    let expected = json!({"command":"plugin.run","params":{
+        "path":plugin.path,"approval":plugin.approval,"entry":"catalog","params":{}
+    }});
+    assert_eq!(request.params, expected, "a fresh launch carries the inspected package approval");
+    check_dispatch(&mut h.app, &request).unwrap();
+    assert!(take_interactive_run(&mut h.app, request.serial));
+    request.reply.send(json!({"ok":true,"result":{}})).unwrap();
+    poll(&mut h.app);
+    crate::frame_library::tick(&mut h.app);
+    assert!(h.app.control_held.is_empty(), "completion does not trigger another read");
+
+    // Exercise the real Refresh control without dispatching a guest or reading any files.
+    let mut dialog = h.app.dialog.take().unwrap();
+    let crate::dialogs::Kind::Frame(member) = &mut dialog.kind else { panic!("native frame form") };
+    let ctx = egui::Context::default();
+    let mut paint = |events| {
+        let input =
+            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))), events, ..Default::default() };
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                crate::frame_library::rows(&h.app, ui, member, &mut dialog.inputs);
+            });
+        });
+    };
+    paint(Vec::new());
+    let key = format!("dialog:button::{}", h.app.tr("ui.frame_library.refresh"));
+    let at = crate::scenario::rect_of(&key).expect("the real library refresh button").center();
+    paint(crate::test_support::pointer(at, true));
+    paint(crate::test_support::pointer(at, false));
+    h.app.dialog = Some(dialog);
+    for _ in 0..5 {
+        crate::frame_library::tick(&mut h.app);
+    }
+    assert_eq!(h.app.control_held.len(), 1, "an explicit refresh queues exactly one more read");
+    assert_eq!(h.app.control_held.front().unwrap().params, expected);
+    assert_eq!(h.app.session.doc, before, "catalog reads only populate the form");
+}
+
 pub(crate) fn listed(id: &str, entries: Vec<solidcraft_engine::plugin::Entry>) -> Listed {
     Listed {
         id: id.into(),
