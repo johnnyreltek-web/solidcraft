@@ -1,0 +1,38 @@
+{
+  "en": {
+    "ui.navigator_roll_clockwise": "Roll 90° clockwise",
+    "ui.navigator_roll_counterclockwise": "Roll 90° counterclockwise"
+  },
+  "es": {
+    "ui.navigator_roll_clockwise": "Girar la vista 90° en sentido horario",
+    "ui.navigator_roll_counterclockwise": "Girar la vista 90° en sentido antihorario"
+  },
+  "ar": {
+    "ui.navigator_roll_clockwise": "تدوير 90° مع عقارب الساعة",
+    "ui.navigator_roll_counterclockwise": "تدوير 90° عكس عقارب الساعة"
+  },
+  "he": {
+    "ui.navigator_roll_clockwise": "סובב 90° עם כיוון השעון",
+    "ui.navigator_roll_counterclockwise": "סובב 90° נגד כיוון השעון"
+  },
+  "ja": {
+    "ui.navigator_roll_clockwise": "時計回りに90°回転",
+    "ui.navigator_roll_counterclockwise": "反時計回りに90°回転"
+  },
+  "vi": {
+    "ui.navigator_roll_clockwise": "Xoay 90° theo chiều kim đồng hồ",
+    "ui.navigator_roll_counterclockwise": "Xoay 90° ngược chiều kim đồng hồ"
+  },
+  "zh": {
+    "ui.navigator_roll_clockwise": "顺时针旋转90°",
+    "ui.navigator_roll_counterclockwise": "逆时针旋转90°"
+  },
+  "de": {
+    "ui.navigator_roll_clockwise": "90° im Uhrzeigersinn drehen",
+    "ui.navigator_roll_counterclockwise": "90° gegen den Uhrzeigersinn drehen"
+  },
+  "ko": {
+    "ui.navigator_roll_clockwise": "시계 방향으로 90° 회전",
+    "ui.navigator_roll_counterclockwise": "시계 반대 방향으로 90° 회전"
+  }
+}

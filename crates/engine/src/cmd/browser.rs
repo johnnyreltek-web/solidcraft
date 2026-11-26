@@ -780,6 +780,12 @@ fn unisolate(s: &mut Session, p: &Value, visible: bool) -> Result<Value> {
 fn visibility(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "browser.visibility";
     let visible = bool_(p, "visible").ok_or_else(|| bad(cmd, "`visible` must be true or false"))?;
+    if p.get("transparent").is_some()
+        && (p.get("paths").is_none()
+            || ["items", "folder", "joints", "tree_folders", "features", "path", "isolate", "unisolate"].iter().any(|key| p.get(*key).is_some()))
+    {
+        return Err(bad(cmd, "transparency requires occurrence paths as its only target"));
+    }
     if bool_(p, "unisolate").unwrap_or(false) {
         return unisolate(s, p, visible);
     }
@@ -849,6 +855,23 @@ fn visibility(s: &mut Session, p: &Value) -> Result<Value> {
                 Ok(path)
             })
             .collect::<Result<_>>()?;
+        if let Some(transparent) = bool_(p, "transparent") {
+            let overrides = &mut s.visibility.transparent_occurrences;
+            for path in &paths {
+                if transparent {
+                    if !overrides.contains(path) {
+                        overrides.push(path.clone());
+                    }
+                } else {
+                    overrides.retain(|existing| existing != path);
+                }
+            }
+            let visibility = VisibilityState::from(&s.visibility);
+            return reply(
+                cmd,
+                BrowserVisibilityResult { visible, changed: Some(paths.len()), isolated: None, visibility, param_warnings: Vec::new() },
+            );
+        }
         if bool_(p, "isolate").unwrap_or(false) {
             if !visible {
                 return Err(bad(cmd, "isolate requires visible:true"));
@@ -4153,6 +4176,43 @@ mod tests {
     /// A visibility batch that fails validation changes nothing: every key is checked
     /// before any of them is applied, and the failed command leaves the saved visibility
     /// as it was (#7313).
+    #[test]
+    fn component_transparency_is_reported_saved_and_undoable() {
+        let mut s = Session::default();
+        let created = run(&mut s, "component.create", json!({"name": "Cover", "grounded": false}));
+        let occurrence = created["occurrence"].as_u64().unwrap();
+        run(&mut s, "component.activate", json!({"component": "root"}));
+        let paths = json!([[occurrence]]);
+        s.mark_saved();
+        let steps = s.undo.len();
+        let result = run(&mut s, "browser.visibility", json!({"paths": paths, "visible": true, "transparent": true}));
+        assert_eq!(result["visibility"]["transparent_occurrences"], paths);
+        assert_eq!(s.visibility.transparent_occurrences, vec![vec![occurrence]]);
+        assert!(s.visibility.hidden_occurrences.is_empty(), "transparency is not hiding");
+        assert!(s.is_dirty());
+        assert_eq!(s.undo.len(), steps + 1);
+
+        let reopened = Session::new(solidcraft_doc::Document::from_json(&s.design().to_json()).unwrap());
+        assert_eq!(reopened.visibility.transparent_occurrences, vec![vec![occurrence]]);
+        assert!(reopened.visibility.hidden_occurrences.is_empty());
+        assert!(!reopened.is_dirty());
+        let plain = solidcraft_doc::Document::from_json(&Session::default().design().to_json()).unwrap();
+        assert!(plain.visibility.transparent_occurrences.is_empty());
+
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.visibility.transparent_occurrences.is_empty());
+        run(&mut s, "edit.redo", json!({}));
+        assert_eq!(s.visibility.transparent_occurrences, vec![vec![occurrence]]);
+        let before = s.visibility.clone();
+        assert!(s.execute("browser.visibility", &json!({"paths": [[occurrence], [999999]], "visible": true, "transparent": false})).is_err());
+        assert_eq!(s.visibility, before, "an invalid placement must refuse the entire transparency batch");
+        let result = run(&mut s, "browser.visibility", json!({"paths": paths, "visible": true, "transparent": false}));
+        assert!(s.visibility.transparent_occurrences.is_empty());
+        assert!(result["visibility"].get("transparent_occurrences").is_none());
+        run(&mut s, "edit.undo", json!({}));
+        assert_eq!(s.visibility.transparent_occurrences, vec![vec![occurrence]]);
+    }
+
     #[test]
     fn invalid_visibility_batches_are_atomic() {
         let mut s = Session::default();

@@ -1,0 +1,38 @@
+{
+  "en": {
+    "ui.component_make_transparent": "Make Transparent",
+    "ui.component_make_opaque": "Make Opaque"
+  },
+  "es": {
+    "ui.component_make_transparent": "Hacer transparente",
+    "ui.component_make_opaque": "Hacer opaco"
+  },
+  "ar": {
+    "ui.component_make_transparent": "جعله شفافًا",
+    "ui.component_make_opaque": "جعله معتمًا"
+  },
+  "he": {
+    "ui.component_make_transparent": "הפוך לשקוף",
+    "ui.component_make_opaque": "הפוך לאטום"
+  },
+  "ja": {
+    "ui.component_make_transparent": "透明にする",
+    "ui.component_make_opaque": "不透明にする"
+  },
+  "vi": {
+    "ui.component_make_transparent": "Làm trong suốt",
+    "ui.component_make_opaque": "Làm mờ đục"
+  },
+  "zh": {
+    "ui.component_make_transparent": "设为透明",
+    "ui.component_make_opaque": "设为不透明"
+  },
+  "de": {
+    "ui.component_make_transparent": "Transparent machen",
+    "ui.component_make_opaque": "Undurchsichtig machen"
+  },
+  "ko": {
+    "ui.component_make_transparent": "투명하게 만들기",
+    "ui.component_make_opaque": "불투명하게 만들기"
+  }
+}

@@ -1072,6 +1072,9 @@ pub struct BrowserVisibilityParams {
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "PlacementPaths")]
     pub paths: Option<PlacementPaths>,
+    /// With paths: set or clear the placement transparency override.
+    #[serde(default)]
+    pub transparent: Option<bool>,
     /// With `paths`, or `items` of bodies, and `visible: true`: show only those and hide
     /// everything else, other placements as placements. Default: false.
     #[serde(default)]
@@ -1090,6 +1093,9 @@ pub struct VisibilityState {
     pub hidden_bodies: Vec<String>,
     /// Placements hidden with all their descendants, by occurrence path.
     pub hidden_occurrences: Vec<Vec<u64>>,
+    /// Placements displayed transparently with all descendants. Present when any are set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transparent_occurrences: Vec<Vec<u64>>,
     /// Origin items and construction geometry hidden, by name.
     pub hidden_origin: Vec<String>,
     /// Sketches hidden, by feature id.
@@ -1124,6 +1130,7 @@ impl From<&solidcraft_doc::Visibility> for VisibilityState {
         VisibilityState {
             hidden_bodies: v.hidden_bodies.clone(),
             hidden_occurrences: v.hidden_occurrences.clone(),
+            transparent_occurrences: v.transparent_occurrences.clone(),
             hidden_origin: v.hidden_origin.clone(),
             hidden_sketches: v.hidden_sketches.clone(),
             shown_sketches: v.shown_sketches.clone(),

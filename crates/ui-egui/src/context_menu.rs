@@ -1053,6 +1053,7 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         }
         v.push(Item::sep());
         v.push(act("ui.appearance", "Appearance", "appearance").key("A"));
+        v.extend(body_transparency_item(app, &face));
         v.push(act("ui.properties", "Properties", "measure").with(json!({ "bodies": [face] })));
         v.push(act("ui.saveMesh", "Save As Mesh", "export").with(json!({ "bodies": [face] })));
         v.push(Item::sep());
@@ -1083,6 +1084,7 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         let hidden = app.session.visibility.hidden_bodies.contains(&body);
         v.push(cmd(app, "solid.fillet", "Fillet"));
         v.push(cmd(app, "solid.chamfer", "Chamfer"));
+        v.extend(body_transparency_item(app, &body));
         v.push(Item::sep());
         v.push(act("ui.delete", "Delete", "delete").key("Del"));
         v.push(act(if hidden { "ui.show" } else { "ui.hide" }, "Show/Hide", "eye").key("V").with(json!({ "bodies": [body] })));
@@ -1093,8 +1095,19 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         v.push(act("ui.tangentChain", "Select Tangent Chain", "chain"));
         v.push(cmd(app, "select.edge_loop", "Select Edge Loop"));
         v.push(cmd(app, "inspect.measure", "Measure"));
-    } else if has(|s| matches!(s, Sel::Body { .. })) {
+    } else if let [Sel::Occurrence { path }] = sel {
+        v.push(transparency_item(app, path));
         v.extend(body_items(app, &sel_bodies(app), false));
+    } else if has(|s| matches!(s, Sel::Body { .. })) {
+        let bodies = sel_bodies(app);
+        if let [body] = bodies.as_slice() {
+            v.extend(body_transparency_item(app, body));
+        }
+        v.extend(body_items(app, &bodies, false));
+    } else if let [Sel::Vertex { body, .. }] = sel
+        && let Some(item) = body_transparency_item(app, body)
+    {
+        v.push(item);
     } else if has(|s| matches!(s, Sel::Profile { .. })) {
         v.push(cmd(app, "solid.extrude", "Extrude"));
         v.push(cmd(app, "solid.revolve", "Revolve"));
@@ -1445,6 +1458,17 @@ fn link_items(app: &SolveApp, index: usize) -> Vec<Item> {
     ]
 }
 
+fn transparency_item(app: &SolveApp, path: &[u64]) -> Item {
+    let transparent = app.session.visibility.transparent_occurrences.iter().any(|existing| existing == path);
+    act("browser.visibility", app.tr(if transparent { "ui.component_make_opaque" } else { "ui.component_make_transparent" }), "appearance")
+        .with(json!({"paths": [path], "visible": true, "transparent": !transparent}))
+}
+
+fn body_transparency_item(app: &SolveApp, body: &str) -> Option<Item> {
+    let path = crate::dialogs::body_placement_path(&app.session, body)?;
+    Some(transparency_item(app, &path))
+}
+
 /// The menu of the placement at `path`: its component's menu, with the rows aimed at this
 /// placement, and "Relink Source…" for it alone when the component is placed more than once.
 fn occurrence_items(app: &SolveApp, path: &[u64]) -> Vec<Item> {
@@ -1500,6 +1524,7 @@ fn occurrence_items(app: &SolveApp, path: &[u64]) -> Vec<Item> {
         }
         _ => {}
     });
+    entries.push(transparency_item(app, path));
     // One placement of several can show another design on its own, above the row for all of them.
     if app.session.doc.links.contains_key(&placement.component)
         && app.session.doc.occurrences.iter().filter(|o| o.component == placement.component).count() > 1

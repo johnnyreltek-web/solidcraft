@@ -435,6 +435,9 @@ pub(crate) fn body_cut_at(
         if crate::viewport::frame_ghosted(app, b) || crate::viewport::wire_ghost(app, b) {
             continue;
         }
+        if crate::viewport::component_transparent(app, b) {
+            continue;
+        }
         // A sheet or an open shell has no inside to cut: a ray crossing it once is not within
         // material, so it must not raise a cap that hides what lies behind (#17177).
         if !b.is_closed() {

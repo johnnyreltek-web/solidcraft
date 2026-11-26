@@ -149,7 +149,7 @@ fn browser_schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<BrowserOrderParams>(), &["component", "folder", "order"]);
     assert_keys(
         input_schema_for::<BrowserVisibilityParams>(),
-        &["features", "folder", "isolate", "items", "joints", "path", "paths", "tree_folders", "unisolate", "visible"],
+        &["features", "folder", "isolate", "items", "joints", "path", "paths", "transparent", "tree_folders", "unisolate", "visible"],
     );
     assert_keys(input_schema_for::<BrowserFoldParams>(), &["component", "path"]);
 }
@@ -307,6 +307,7 @@ fn the_visibility_reply_type_matches_the_design_s() {
     let v = solidcraft_doc::Visibility {
         hidden_bodies: vec!["A".into()],
         hidden_occurrences: vec![vec![1, 2]],
+        transparent_occurrences: vec![vec![9]],
         hidden_origin: vec!["X".into()],
         hidden_sketches: vec![4],
         shown_sketches: vec![5],

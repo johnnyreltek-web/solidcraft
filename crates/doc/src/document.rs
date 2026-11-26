@@ -4659,6 +4659,9 @@ pub struct Visibility {
     pub hidden_bodies: Vec<String>,
     /// Exact occurrence placements hidden with all descendants.
     pub hidden_occurrences: Vec<Vec<u64>>,
+    /// Exact occurrence placements displayed transparently, including their descendants.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub transparent_occurrences: Vec<Vec<u64>>,
     /// Origin items (O, X, Y, Z, XY, XZ, YZ) and construction geometry, by name.
     pub hidden_origin: Vec<String>,
     /// Sketches by feature id.
@@ -4727,6 +4730,7 @@ impl Visibility {
     pub fn is_empty(&self) -> bool {
         self.hidden_bodies.is_empty()
             && self.hidden_occurrences.is_empty()
+            && self.transparent_occurrences.is_empty()
             && self.hidden_origin.is_empty()
             && self.hidden_sketches.is_empty()
             && self.shown_sketches.is_empty()

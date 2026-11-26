@@ -1840,6 +1840,11 @@ fn a_ring_of_links_closes_and_drives() {
     assert!((r["values"][0]["value"].as_f64().unwrap_or(f64::NAN) - 10.0).abs() < 1e-9, "{r}");
     let after = place(&s, "L1", Vec3::ZERO);
     assert!(after.dist(before) > 1.0, "the link did not move: {before:?} to {after:?}");
+    // Viewport dragging uses reach, whose whole-group limit must also admit this ring.
+    // Even an already-satisfied target used to fail before solving with the 64-value cap.
+    let r = run(&mut s, "joint.reach", json!({"occurrence": "L1", "at": [after.x, after.y, after.z], "point": [after.x, after.y, after.z]}));
+    assert_eq!(r["reached"], true, "a 66-link ring must remain draggable: {r}");
+    assert!(r["stopped_by_loop"].is_null(), "{r}");
 }
 
 /// A joint of the folding cube toy: a pin (cylindrical) or the planar joint beside it.
