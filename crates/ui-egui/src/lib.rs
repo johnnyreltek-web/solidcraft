@@ -4460,29 +4460,6 @@ impl SolveApp {
         self.frame_view_bounds(home, None);
     }
 
-    /// Recall a saved camera in the active up-axis convention, retaining its world orientation.
-    pub(crate) fn animate_saved_camera(&mut self, saved: &solidcraft_engine::doc::NamedView) {
-        let mut camera = Camera {
-            target: saved.target,
-            yaw: saved.yaw,
-            pitch: saved.pitch,
-            roll: saved.roll,
-            distance: saved.distance,
-            fov: saved.fov,
-            up: saved.up,
-        };
-        if camera.up != self.cam.up {
-            use solidcraft_viewport::vec::Vec3Ops;
-
-            let (right, _, back) = camera.basis();
-            camera.up = self.cam.up;
-            camera = camera.looking_from(back);
-            let (base_right, base_up, _) = camera.basis();
-            camera.roll = right.dot(base_up).atan2(right.dot(base_right));
-        }
-        self.animate_to(camera);
-    }
-
     /// Frame a preview's result through the same path, using its bounds before it is committed.
     fn frame_view_bounds(&mut self, home: bool, preview_bounds: Option<solidcraft_engine::geom::Aabb3>) {
         if render_workspace::result_active(self) {
@@ -4513,13 +4490,6 @@ impl SolveApp {
             return;
         }
         self.pending_fit = None;
-        if home
-            && preview_bounds.is_none()
-            && let Some(saved) = self.session.doc.named_views.iter().find(|view| view.name == "Home").cloned()
-        {
-            self.animate_saved_camera(&saved);
-            return;
-        }
         let mut to = self.cam;
         if home {
             to.set_view(StandardView::Iso);

@@ -11794,12 +11794,6 @@ fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, focused_v
     match crate::view_compass::show(ui, &compass) {
         Some(crate::view_compass::ViewAction::Snap { direction, .. }) => {
             let d = Vec3::from(direction);
-            if d == -Vec3::X
-                && let Some(saved) = app.session.doc.named_views.iter().find(|view| view.name == "Negative X").cloned()
-            {
-                app.animate_saved_camera(&saved);
-                return;
-            }
             let frame = app.cam.to_frame(d);
             let dir = if app.cam.back().dot(d) > 0.9999 { -d } else { d };
             let mut to = app.cam.looking_from(dir);
