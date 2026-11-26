@@ -1072,6 +1072,9 @@ pub struct BrowserVisibilityParams {
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "PlacementPaths")]
     pub paths: Option<PlacementPaths>,
+    /// With paths: set or clear the placement transparency override.
+    #[serde(default)]
+    pub transparent: Option<bool>,
     /// With `paths`, or `items` of bodies, and `visible: true`: show only those and hide
     /// everything else, other placements as placements. Default: false.
     #[serde(default)]

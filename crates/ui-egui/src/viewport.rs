@@ -1138,6 +1138,7 @@ fn base_scene_key(app: &SolveApp) -> u64 {
     (app.preferences.isolate_others, app.session.visibility.before_isolate.as_ref().map(|b| &b.shown_bodies)).hash(&mut h);
     app.dialog.as_ref().map(|d| &d.edit_source_bodies).hash(&mut h);
     app.session.visibility.hidden_occurrences.hash(&mut h);
+    app.session.visibility.transparent_occurrences.hash(&mut h);
     app.session.visibility.hidden_sketches.hash(&mut h);
     app.session.visibility.shown_sketches.hash(&mut h);
     app.session.visibility.hidden_folders.hash(&mut h);
@@ -1337,6 +1338,22 @@ const FRAME_GHOST_OPACITY: f64 = 0.3;
 /// [`FRAME_GHOST_OPACITY`] as a colour's alpha, as see-through faces are drawn.
 pub(crate) fn frame_ghost_alpha() -> u8 {
     glass_alpha(FRAME_GHOST_OPACITY)
+}
+
+const TRANSPARENT_COMPONENT_OPACITY: f64 = 0.30;
+
+fn transparent_body_names(session: &solidcraft_engine::Session) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for bodies in session.visibility.transparent_occurrences.iter().filter_map(|path| session.occurrence_bodies_shared(path, true).ok()) {
+        names.extend(bodies.iter().cloned());
+    }
+    names
+}
+
+pub(crate) fn component_transparent(app: &SolveApp, body: &solidcraft_engine::doc::ModelBody) -> bool {
+    app.session.visibility.transparent_occurrences.iter().any(|path| {
+        app.session.occurrence_bodies_shared(path, true).is_ok_and(|names| names.iter().any(|name| name == &body.name))
+    })
 }
 
 /// A see-through face's alpha for an opacity.
@@ -1900,7 +1917,7 @@ fn face_classes(app: &SolveApp, b: &solidcraft_engine::doc::ModelBody, active_bo
     if body_faded(app, b, active_bodies) {
         return vec![crate::gpu::TriClass::Faded; b.body.face_count()];
     }
-    if frame_ghosted(app, b) {
+    if frame_ghosted(app, b) || component_transparent(app, b) {
         return vec![crate::gpu::TriClass::Glass; b.body.face_count()];
     }
     let resolved = resolve_appearance(app, b);
@@ -3056,7 +3073,8 @@ fn section_outlines(sc: &mut GpuScene, app: &SolveApp, st: &solidcraft_engine::d
             }
         }
         made.insert(key, (mesh, index));
-        let solid = b.is_closed() && !body_faded(app, b, &active_bodies) && s.doc.model_body_opacity(b) >= 0.999;
+        let solid =
+            b.is_closed() && !body_faded(app, b, &active_bodies) && !component_transparent(app, b) && s.doc.model_body_opacity(b) >= 0.999;
         if by_part && solid && !segments.is_empty() {
             cuts.push((b.name.as_str(), segments));
         }
@@ -3192,6 +3210,7 @@ fn body_scene(
     // filled the palette (`MAX_PALETTE`) at a hundred placements of a large assembly, and the
     // rest were drawn in one grey, without edges.
     let mut copy_keys: std::collections::HashMap<(usize, u64, bool), String> = std::collections::HashMap::new();
+    let transparent_bodies = transparent_body_names(s);
     let keyed: Vec<_> = shown
         .iter()
         .map(|b| {
@@ -3204,11 +3223,12 @@ fn body_scene(
                     key
                 }
             };
+            let transparent = transparent_bodies.contains(&b.name);
             let copy = b
                 .placed_definition()
                 // A copy drawn finer than the others (zoomed in on) is drawn from its own plan, in
                 // its face slots: shared, they would name no motion, and a joint drag would leave it.
-                .filter(|_| repeated_copy(app, b) && refined(app, b).is_none())
+                .filter(|_| !transparent && repeated_copy(app, b) && refined(app, b).is_none())
                 .map(|definition| (definition, look_key(&s.doc, b, &appearance.faces, colored)));
             let slots = match copy {
                 Some((definition, look)) => {
@@ -3217,7 +3237,7 @@ fn body_scene(
                 }
                 None => arena.body(&b.name, b.body.face_count()),
             };
-            (faded, identity, slots, copy)
+            (faded, identity, slots, copy, transparent)
         })
         .collect();
     drop(copy_keys);
@@ -3238,7 +3258,7 @@ fn body_scene(
     let mut edge_placements = std::collections::HashMap::new();
     sc.instanced_hidden_edges = hidden_edges && instances.edges.is_some();
     let mut thread_budget = solidcraft_engine::cosmetic_threads::Budget::default();
-    for (b, (faded, identity, slots, copy)) in shown.into_iter().zip(keyed) {
+    for (b, (faded, identity, slots, copy, transparent)) in shown.into_iter().zip(keyed) {
         // What an Isolate hid, shown as its edges: faint edges, no faces, never from a plan or an
         // instance (whose faces those draw).
         let wire = wire_ghost(app, b);
@@ -3261,6 +3281,7 @@ fn body_scene(
         set_palette_color(&mut arena, &mut sc.palette, slots.edge, if wire { ghost_edge() } else { edge_col });
         set_palette_color(&mut arena, &mut sc.palette, slots.hidden_edge, hidden_col);
         if app.preferences.cosmetic_threads
+            && !transparent
             && thread_budget.available()
             && shaded
             && !faded
@@ -3279,7 +3300,8 @@ fn body_scene(
         let col = if faded { c4(base.gamma_multiply(0.35)) } else { c4(base) };
         set_palette_color(&mut arena, &mut sc.palette, slots.body, col);
         // Appearances: the body's opacity, and faces with looks of their own.
-        let opacity = if ghosted { FRAME_GHOST_OPACITY } else { resolved.opacity };
+        let display_opacity = |opacity: f64| if transparent { opacity.min(TRANSPARENT_COMPONENT_OPACITY) } else { opacity };
+        let opacity = if ghosted { FRAME_GHOST_OPACITY } else { display_opacity(resolved.opacity) };
         // PBR finishes (metallic, roughness) for opaque bodies and faces in their own colours
         // (shown when Preferences › Graphics says so, `sky_uniform`).
         let finishes = !faded;
@@ -3306,7 +3328,7 @@ fn body_scene(
                 for f in 0..faces {
                     let look = face_looks.get(&f);
                     let color = look.map_or(base, |l| Color32::from_rgb(l.color[0], l.color[1], l.color[2]));
-                    let opacity = look.map_or(opacity, |l| l.opacity);
+                    let opacity = look.map_or(opacity, |l| display_opacity(l.opacity));
                     let (rgba, class) = if faded {
                         (c4(color.gamma_multiply(0.35)), crate::gpu::TriClass::Faded)
                     } else if opacity < 0.999 {
@@ -4861,17 +4883,19 @@ fn edge_pickable(app: &SolveApp, mesh: &solidcraft_engine::geom::Mesh, index: us
 /// What is under `pos`, reusing the last answer while the cursor, the camera and the model are
 /// unchanged.
 pub(crate) fn pick_cached(app: &mut SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit> {
-    pick_cached_with(app, proj, pos, None)
+    pick_cached_with(app, proj, pos, None, false)
 }
 
 /// Hover should not scan a whole large mesh while its index is being built.
 pub(crate) fn pick_hover(app: &mut SolveApp, proj: &Proj, pos: Pos2, ctx: &egui::Context) -> Vec<Hit> {
-    pick_cached_with(app, proj, pos, Some(ctx))
+    pick_cached_with(app, proj, pos, Some(ctx), false)
 }
 
-fn pick_cached_with(app: &mut SolveApp, proj: &Proj, pos: Pos2, feedback: Option<&egui::Context>) -> Vec<Hit> {
+fn pick_cached_with(app: &mut SolveApp, proj: &Proj, pos: Pos2, feedback: Option<&egui::Context>, pick_transparent: bool) -> Vec<Hit> {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     crate::render_workspace::active(app).hash(&mut h);
+    pick_transparent.hash(&mut h);
+    app.session.visibility.transparent_occurrences.hash(&mut h);
     pos.x.to_bits().hash(&mut h);
     pos.y.to_bits().hash(&mut h);
     for v in [app.cam.yaw, app.cam.pitch, app.cam.roll, app.cam.distance, app.cam.target.x, app.cam.target.y, app.cam.target.z] {
@@ -4940,7 +4964,7 @@ fn pick_cached_with(app: &mut SolveApp, proj: &Proj, pos: Pos2, feedback: Option
         return hits.clone();
     }
     // Hover feedback mirrors what a 3D bridge click will snap to; clicks still go through `pick`.
-    let Some(hits) = picks_with_feedback(app, proj, pos, crate::sketch3d::drawing(app), feedback) else {
+    let Some(hits) = picks_with_feedback(app, proj, pos, crate::sketch3d::drawing(app), feedback, pick_transparent) else {
         // No partial answer or cached miss: retry when the index is ready.
         return Vec::new();
     };
@@ -4994,16 +5018,23 @@ pub(crate) fn pick_through(app: &SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit> {
 }
 
 fn pick_with_sketch_points(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool) -> Vec<Hit> {
-    picks_with_feedback(app, proj, pos, other_sketch_points, None).unwrap_or_default()
+    picks_with_feedback(app, proj, pos, other_sketch_points, None, false).unwrap_or_default()
 }
 
-fn picks_with_feedback(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, feedback: Option<&egui::Context>) -> Option<Vec<Hit>> {
+fn picks_with_feedback(
+    app: &SolveApp,
+    proj: &Proj,
+    pos: Pos2,
+    other_sketch_points: bool,
+    feedback: Option<&egui::Context>,
+    pick_transparent: bool,
+) -> Option<Vec<Hit>> {
     // Gray canvas can navigate but cannot supply an invisible surface for selection,
     // cursor orbit or surface zoom beyond the rendered image's captured camera frame.
     if crate::render_workspace::active(app) && !app.preferences.render_legacy_image_defaults && !proj.rect.contains(pos) {
         return Some(Vec::new());
     }
-    let mut hits = pick_hits(app, proj, pos, PickOptions { other_sketch_points, include_midpoints: true, feedback, ..PickOptions::default() })?;
+    let mut hits = pick_hits(app, proj, pos, PickOptions { other_sketch_points, include_midpoints: true, feedback, pick_transparent, ..PickOptions::default() })?;
     // A Single hole's face place snaps to the face's centre and its round edges' centres.
     crate::hole_place::snap_hits(app, proj, pos, &mut hits);
     Some(hits)
@@ -5094,11 +5125,12 @@ struct PickOptions<'a> {
     all: bool,
     include_midpoints: bool,
     through: bool,
+    pick_transparent: bool,
     feedback: Option<&'a egui::Context>,
 }
 
 fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, options: PickOptions<'_>) -> Option<Vec<Hit>> {
-    let PickOptions { other_sketch_points, all, include_midpoints, through, feedback } = options;
+    let PickOptions { other_sketch_points, all, include_midpoints, through, pick_transparent, feedback } = options;
     // Select Other and tool picks share the same visible-image boundary as ordinary picks.
     if crate::render_workspace::active(app) && !app.preferences.render_legacy_image_defaults && !proj.rect.contains(pos) {
         return Some(Vec::new());
@@ -5366,6 +5398,12 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, options: PickOptions<'_>) -
     let section = section_planes(app);
     let kept = |p: Vec3| crate::view_pick::section_keeps(&section, p);
     let walk_eps = 1e-6 * (1.0 + scene_radius(app));
+    // Select Other retains both the front component and the geometry behind it.
+    let transparent = if all || pick_transparent || crate::render_workspace::active(app) {
+        Default::default()
+    } else {
+        transparent_body_names(s)
+    };
     // Nearest face along the ray (hides what is behind it); with `all`, every body's nearest.
     let mut bestf: Option<(f64, Hit)> = None;
     let mut faces = Near::new(all);
@@ -5374,7 +5412,11 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, options: PickOptions<'_>) -
     for (i, b) in st.bodies.iter().enumerate() {
         // A ghosted frame member's faces don't stop a click: it goes through to what is behind.
         // Nor do the faces of what an Isolate hid shown as wireframe: only its edges are drawn.
-        if (!through && !crate::viewport::body_shown(app, &b.name)) || frame_ghosted(app, b) || wire_ghost(app, b) {
+        if (!through && !crate::viewport::body_shown(app, &b.name))
+            || transparent.contains(&b.name)
+            || frame_ghosted(app, b)
+            || wire_ghost(app, b)
+        {
             continue;
         }
         // Bodies whose box the ray misses (or enters behind the best hit so far) are skipped.
@@ -5448,7 +5490,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, options: PickOptions<'_>) -
     let mut bestv = Near::new(all);
     let mut beste = Near::new(all);
     for (i, b) in st.bodies.iter().enumerate() {
-        if !through && !crate::viewport::body_shown(app, &b.name) {
+        if (!through && !crate::viewport::body_shown(app, &b.name)) || transparent.contains(&b.name) {
             continue;
         }
         // A ghosted frame member's vertices are picked, its edges are not.
@@ -7084,7 +7126,7 @@ fn highlight_opaque(app: &SolveApp, b: &solidcraft_engine::doc::ModelBody, activ
     }
     let doc = &app.session.doc;
     let faces_opaque = app.ui.visual_style == 2 || doc.face_colors(b).iter().all(|(_, l)| l.opacity >= 0.999);
-    !body_faded(app, b, active_bodies) && doc.model_body_opacity(b) >= 0.999 && faces_opaque
+    !body_faded(app, b, active_bodies) && !component_transparent(app, b) && doc.model_body_opacity(b) >= 0.999 && faces_opaque
 }
 
 /// Whole highlighted bodies the model draws as placements of shared triangles, collected as one
@@ -8610,6 +8652,7 @@ fn show_view(app: &mut SolveApp, ui: &mut egui::Ui) {
     // An appearance swatch uses this frame's hover as its drop target.
     let swatch_released =
         ui.input(|i| i.pointer.any_released()) && egui::DragAndDrop::has_payload_of_type::<solidcraft_engine::doc::appearance::Look>(ui.ctx());
+    let pick_transparent = ui.input(|i| i.modifiers.shift) || resp.secondary_clicked();
     let hits = hover
         .filter(|_| {
             inside
@@ -8622,11 +8665,12 @@ fn show_view(app: &mut SolveApp, ui: &mut egui::Ui) {
                 && !design_dragged
         })
         .map(|p| {
-            if primary_down || swatch_released || resp.clicked() || resp.secondary_clicked() {
-                pick_cached(app, &proj, p)
+            let feedback = if primary_down || swatch_released || resp.clicked() || resp.secondary_clicked() {
+                None
             } else {
-                pick_hover(app, &proj, p, ui.ctx())
-            }
+                Some(ui.ctx())
+            };
+            pick_cached_with(app, &proj, p, feedback, pick_transparent)
         })
         .unwrap_or_default();
     // The Fillet and Chamfer window resolves its own corners: the nearest sketch point to a
@@ -11040,7 +11084,7 @@ pub fn follow_pointer_without_frame(app: &mut SolveApp, ctx: &egui::Context, pos
     {
         return false;
     }
-    let Some(picks) = picks_with_feedback(app, &q.proj, pos, false, Some(ctx)) else {
+    let Some(picks) = picks_with_feedback(app, &q.proj, pos, false, Some(ctx), ctx.input(|input| input.modifiers.shift)) else {
         return false;
     };
     let hover = candidate(app, &picks).map(|(hit, _)| hit);
@@ -11741,11 +11785,21 @@ fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, focused_v
         snap_hint: !app.preferences.free_orbit,
         home_label: solidcraft_ui_text::tr_label("Home view").to_owned(),
         turn_around_label: (focused_view && app.preferences.navigator_turn_around).then(|| app.tr("ui.navigator_turn_around").to_owned()),
+        roll_labels: focused_view.then(|| [
+            app.tr("ui.navigator_roll_counterclockwise").to_owned(),
+            app.tr("ui.navigator_roll_clockwise").to_owned(),
+        ]),
     };
     // The compass returns a view action; its drag came from `axis_view_orbit` above.
     match crate::view_compass::show(ui, &compass) {
         Some(crate::view_compass::ViewAction::Snap { direction, .. }) => {
             let d = Vec3::from(direction);
+            if d == -Vec3::X
+                && let Some(saved) = app.session.doc.named_views.iter().find(|view| view.name == "Negative X").cloned()
+            {
+                app.animate_saved_camera(&saved);
+                return;
+            }
             let frame = app.cam.to_frame(d);
             let dir = if app.cam.back().dot(d) > 0.9999 { -d } else { d };
             let mut to = app.cam.looking_from(dir);
@@ -11758,6 +11812,14 @@ fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, focused_v
         Some(crate::view_compass::ViewAction::TurnAround) => {
             let camera = app.cam_anim.as_ref().map_or(app.cam, |animation| animation.to);
             let _ = app.run("view.navigate", json!({"camera":camera,"action":"turn_around","fit":app.preferences.navigator_fit}));
+        }
+        Some(crate::view_compass::ViewAction::Roll { clockwise }) => {
+            let mut camera = app.cam_anim.as_ref().map_or(app.cam, |animation| animation.to);
+            let quarter_turn = std::f64::consts::FRAC_PI_2;
+            let delta = if clockwise { quarter_turn } else { -quarter_turn };
+            camera.roll = (camera.roll + delta + std::f64::consts::PI)
+                .rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+            app.animate_to(camera);
         }
         None => {}
     }
@@ -15335,6 +15397,43 @@ mod tests {
         assert!(differ * 20 < drawn, "{differ} of {drawn} pixels differ");
     }
 
+    #[test]
+    fn transparency_menu_toggles_one_placement_and_keeps_its_appearance() {
+        use crate::context_menu::{Target, items, run_item};
+        use crate::gpu::InstanceLook;
+
+        let mut app = three_placed_parts(PARTS[0]);
+        let occurrence = app.session.doc.occurrences[0].id;
+        let path = vec![occurrence];
+        let name = app.session.occurrence_bodies(&path, false).unwrap().remove(0);
+        app.run("appearance.assign", json!({"bodies": [name], "color": "#3366cc"})).unwrap();
+        let appearance = app.session.doc.clone();
+
+        let target = Target::Occurrence { path: path.clone() };
+        let browser = items(&app, &target);
+        let toggle = browser.iter().find(|item| item.label == "Make Transparent").unwrap();
+        run_item(&mut app, toggle, Pos2::ZERO);
+
+        assert_eq!(app.session.visibility.transparent_occurrences, [path]);
+        assert_eq!(app.session.doc.appearances, appearance.appearances);
+        let scene = build_scene(&app);
+        assert_eq!(
+            scene.instanced.iter().filter(|mesh| mesh.look == InstanceLook::Opaque).map(|mesh| mesh.count()).sum::<usize>(),
+            2,
+        );
+        assert!(
+            !scene.glass.is_empty() || scene.instanced.iter().any(|mesh| mesh.look == InstanceLook::Glass && mesh.count() == 1)
+        );
+
+        let browser = items(&app, &target);
+        let restore = browser.iter().find(|item| item.label == "Make Opaque").unwrap();
+        app.run("select.set", json!({"items": [{"type": "body", "name": name}]})).unwrap();
+        assert!(items(&app, &Target::Viewport).iter().any(|item| item.label == "Make Opaque"));
+        run_item(&mut app, restore, Pos2::ZERO);
+        assert!(app.session.visibility.transparent_occurrences.is_empty());
+        assert_eq!(app.session.doc.appearances, appearance.appearances);
+    }
+
     /// See-through and faded placements of a part are drawn as instances too, with their alpha:
     /// glass with an appearance's opacity, faded context with another component active. None
     /// of their triangles go to the glass sorted triangle by triangle, and they look as their
@@ -15500,6 +15599,36 @@ mod tests {
         assert!(drawn > 1000, "drawn {drawn}");
         let differ = instanced.chunks(4).zip(own.chunks(4)).filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 24)).count();
         assert!(differ * 50 < drawn, "{differ} of {drawn} pixels differ");
+    }
+
+    #[test]
+    fn transparent_placement_passes_picks_to_the_geometry_behind_it() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.set_origin_shown(false);
+        h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Bracket"})).unwrap();
+        h.app.run("component.create", json!({"name": "Cover"})).unwrap();
+        h.app.run("solid.box", json!({"length": 30, "width": 30, "height": 10, "corner": [-10, -10, 20]})).unwrap();
+        h.app.run("component.activate", json!({"component": "root"})).unwrap();
+        let path = vec![h.app.session.doc.occurrences[0].id];
+        let cover = h.app.session.occurrence_bodies(&path, false).unwrap().remove(0);
+        h.call("ui.view", json!({"view": "top"}));
+        h.call("ui.view", json!({"view": "fit"}));
+        let proj = projection(&h.app, h.app.viewport.rect.unwrap());
+        let at = proj.to_screen(Vec3::new(5.0, 5.0, 10.0)).unwrap();
+        let face = |hits: Vec<Hit>| hits.into_iter().find_map(|h| match h {
+            Hit::Face { body, .. } => Some(body),
+            _ => None,
+        });
+        assert_eq!(face(pick_cached(&mut h.app, &proj, at)).as_deref(), Some(cover.as_str()));
+
+        h.app.run("browser.visibility", json!({"visible": true, "paths": [path], "transparent": true})).unwrap();
+        assert_eq!(face(pick_cached(&mut h.app, &proj, at)).as_deref(), Some("Bracket"));
+        assert_eq!(face(pick_cached_with(&mut h.app, &proj, at, None, true)).as_deref(), Some(cover.as_str()));
+        assert_eq!(face(pick_cached(&mut h.app, &proj, at)).as_deref(), Some("Bracket"));
+        assert!(pick_all(&h.app, &proj, at).iter().any(|hit| matches!(hit, Hit::Face { body, .. } if body == &cover)));
+
+        let edge = proj.to_screen(Vec3::new(5.0, 0.0, 10.0)).unwrap();
+        assert!(pick(&h.app, &proj, edge).iter().any(|hit| matches!(hit, Hit::Edge { body, .. } if body == "Bracket")));
     }
 
     /// Each placement of a part is picked where it stands, the turned one too, from the part's

@@ -337,9 +337,12 @@ fn insert_design_reads_the_saved_design_while_the_window_draws() {
     until(&mut h, &|app| app.file_load.idle());
     assert!(h.widget(solidcraft_ui_text::tr("file_load.inserting")).is_none(), "the overlay goes once it is done");
     assert_eq!(links(&mut h.app), 1, "the plate is a linked component");
+    let occurrence = h.app.session.doc.occurrences.last().expect("the inserted placement").id;
+    assert_eq!(crate::dialogs_move::moving(&h.app), Some(vec![occurrence]));
     near(&mut h.app, 1000.0 + plate);
     assert_eq!(h.app.status.as_ref().map(|s| s.0.as_str()), Some("Inserted plate"));
     // One undo step takes it back.
+    crate::dialogs::cancel(&mut h.app);
     h.app.run("edit.undo", json!({})).unwrap();
     assert_eq!(links(&mut h.app), 0);
     near(&mut h.app, 1000.0);

@@ -10,10 +10,10 @@
 //! a caller sees. A call with several problems may get a different one first in strict than with
 //! the check off (the check goes key by key, the handlers in their own order).
 //!
-//! `frame.member` reads some keys only in some cases. With `profile` (a built-in profile) it
-//! never reads `profiles` or `exact_regions`, which pick among a section sketch's profiles; with
-//! `profile_sketch` it never reads `profile`. Given both, or neither, it refuses the call before
-//! it reads anything about the section, so none of the three is read then either.
+//! `frame.member` reads some keys only in some cases. With `profile` (a built-in profile) or
+//! `profile_snapshot` it never reads `profiles` or `exact_regions`, which pick among a section
+//! sketch's profiles. Given several section sources, or none, it refuses the call before it
+//! reads anything about the section.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -58,6 +58,41 @@ fn wrap(key: &str, v: Value) -> Value {
 /// handler's to check, as it has the design.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProfileParam(pub ProfileSpec);
+
+/// A validated fixed sketch section, copied into the member rather than linked to a source.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProfileSnapshotParam(pub frame::ProfileSnapshot);
+
+impl<'de> Deserialize<'de> for ProfileSnapshotParam {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let snapshot = frame::ProfileSnapshot::deserialize(d)?;
+        frame::validate_snapshot(&snapshot.name, &snapshot.sketch).map_err(|e| D::Error::custom(keyed(e)))?;
+        Ok(Self(snapshot))
+    }
+}
+
+impl JsonSchema for ProfileSnapshotParam {
+    fn schema_name() -> Cow<'static, str> {
+        "ProfileSnapshotParam".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "object", "additionalProperties": false, "required": ["name", "sketch"],
+            "properties": {
+                "name": {"type": "string", "minLength": 1, "maxLength": 128},
+                "sketch": {
+                    "type": "object", "required": ["points", "curves", "constraints"],
+                    "description": "Fixed 2D sketch snapshot in millimetres: 1–512 lines, circles or arcs, no expressions or external references.",
+                    "properties": {
+                        "points": {"type": "array", "minItems": 1, "maxItems": 1537, "items": {"type": "object"}},
+                        "curves": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"type": "object"}},
+                        "constraints": {"type": "array", "maxItems": 0}
+                    }
+                }
+            }
+        })
+    }
+}
 
 impl<'de> Deserialize<'de> for ProfileParam {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
@@ -1135,15 +1170,15 @@ impl JsonSchema for NextPair {
     }
 }
 
-/// `sketch` or `pairs` (or both), and one of `profile` and `profile_sketch`, not both, as the
+/// `sketch` or `pairs` (or both), and exactly one of the three section sources, as the
 /// schema says; the type leaves them to the handler's messages.
 fn member_required(schema: &mut Schema) {
-    let only = |key: &str, other: &str| json!({"required": [key], "not": {"required": [other]}});
+    let only = |key: &str, others: &[&str]| json!({"required": [key], "not": {"anyOf": others.iter().map(|other| json!({"required": [other]})).collect::<Vec<_>>()}});
     schema.insert(
         "allOf".into(),
         json!([
             {"anyOf": [{"required": ["sketch"]}, {"required": ["pairs"]}]},
-            {"anyOf": [only("profile", "profile_sketch"), only("profile_sketch", "profile")]},
+            {"anyOf": [only("profile", &["profile_sketch", "profile_snapshot"]), only("profile_sketch", &["profile", "profile_snapshot"]), only("profile_snapshot", &["profile", "profile_sketch"])]},
             // With groups, placement keys live inside each group, never beside them.
             {"anyOf": [
                 {"properties": {"groups": {"type": "null"}}},
@@ -1167,7 +1202,7 @@ fn member_required(schema: &mut Schema) {
 
 /// Lay structural members along the lines of a frame sketch and between pairs of points: one
 /// body per line or pair, from its start to its end, its cross-section square to it. The section
-/// is a built-in `profile` or the profiles of a `profile_sketch`, one of them. Each member keeps
+/// is a built-in `profile`, a `profile_sketch` or a fixed `profile_snapshot`. Each member keeps
 /// its name when other lines or pairs are added or deleted. Returns the feature and the bodies it
 /// made.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1199,18 +1234,23 @@ pub struct FrameMemberKeys {
     /// pair's id is never given again. Default: one past the highest id given.
     #[serde(default)]
     pub next_pair: Option<NextPair>,
-    /// The section as a built-in profile. Give it or `profile_sketch`, not both.
+    /// The section as a built-in profile. Give exactly one section source.
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ProfileParam")]
     pub profile: Option<ProfileParam>,
     /// The section as a sketch: its profiles, in the sketch's own x and y around its origin. It
-    /// can't be the frame sketch. Give it or `profile`, not both.
+    /// can't be the frame sketch. Give exactly one section source.
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "SketchRef")]
     pub profile_sketch: Option<SketchRef>,
+    /// A reusable fixed section in its own XY coordinates, in millimetres, independent of
+    /// document units and source geometry. Give exactly one section source.
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "ProfileSnapshotParam")]
+    pub profile_snapshot: Option<ProfileSnapshotParam>,
     /// With `profile_sketch`: which of its profiles are the section, as `solid.extrude` takes
     /// them. Default: its material, nested loops alternating, so two circles make a tube. Not
-    /// used with `profile`.
+    /// used with `profile` or `profile_snapshot`.
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ProfilesParam")]
     pub profiles: Option<ProfilesParam>,
@@ -1302,16 +1342,16 @@ impl<'de> Deserialize<'de> for FrameMemberParams {
             }
 
             // A key counts as given when it is there, `null` included, as the handler tests it.
-            match (keys.contains_key("profile"), keys.contains_key("profile_sketch")) {
+            match (keys.contains_key("profile"), keys.contains_key("profile_sketch"), keys.contains_key("profile_snapshot")) {
                 // A built-in profile: the sketch's profile picks are never read.
-                (true, false) => {
+                (true, false, false) | (false, false, true) => {
                     keys.remove("profiles");
                     keys.remove("exact_regions");
                 }
-                (false, true) => {}
+                (false, true, false) => {}
                 // Both or neither: the handler refuses before it reads any of them.
                 _ => {
-                    for key in ["profile", "profile_sketch", "profiles", "exact_regions"] {
+                    for key in ["profile", "profile_sketch", "profile_snapshot", "profiles", "exact_regions"] {
                         keys.remove(key);
                     }
                 }

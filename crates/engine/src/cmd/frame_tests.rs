@@ -29,6 +29,108 @@ fn new_sketch() -> Session {
     s
 }
 
+fn ring_snapshot() -> Value {
+    json!({"name":"Saved ring","sketch":{
+        "points":[{"id":"origin","pos":[0,0],"fixed":true}],
+        "curves":[
+            {"id":"c1","type":"circle","c":0,"r":10,"fixed":true},
+            {"id":"c2","type":"circle","c":0,"r":5,"fixed":true}
+        ], "constraints":[]
+    }})
+}
+
+#[test]
+fn profile_snapshot_is_independent_inch_safe_editable_and_keeps_its_hole() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points":[[0,0],[100,0]]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "document.units", json!({"units":"in"}));
+    let mut params = json!({"sketch":1,"profile_snapshot":ring_snapshot(),"anchor":"center"});
+    // Preview and hot points require no inserted section sketch or other document mutation.
+    let before = s.doc.to_json();
+    let view = super::member_section_view(&s, &params).unwrap();
+    assert_eq!(s.doc.to_json(), before);
+    assert_eq!(view.regions.len(), 1);
+    assert_eq!(view.regions[0].holes.len(), 1);
+    assert_eq!(view.anchors().len(), 11);
+    let feature = run(&mut s, "frame.member", params.clone())["feature"].as_u64().unwrap();
+    assert_eq!(s.doc.features.len(), 2, "the member owns its section without an auxiliary feature");
+    let bs = bodies(&mut s);
+    assert_eq!(bs.len(), 1);
+    assert!(rel(bs[0].1, PI * (100.0 - 25.0) * 100.0) < MEASURED);
+    assert!(near3(bs[0].2, [0.0, -10.0, -10.0]) && near3(bs[0].3, [100.0, 10.0, 10.0]));
+    let mut reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    assert_eq!(bodies(&mut reopened), bs);
+    params["profile_snapshot"]["sketch"]["curves"][0]["r"] = json!(12);
+    run(&mut s, "timeline.redefine", json!({"feature":feature,"command":"frame.member","params":params}));
+    assert_eq!(s.doc.features.len(), 2);
+    assert!(rel(total_volume(&mut s), PI * (144.0 - 25.0) * 100.0) < MEASURED);
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(bodies(&mut s), bs);
+    run(&mut s, "edit.redo", json!({}));
+    assert!(rel(total_volume(&mut s), PI * (144.0 - 25.0) * 100.0) < MEASURED);
+}
+
+#[test]
+fn profile_snapshot_rejects_dependencies_unfixed_geometry_bad_indices_and_multiple_sources_atomically() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points":[[0,0],[100,0]]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let before = s.doc.to_json();
+    let original = ring_snapshot();
+    let mut cases = Vec::new();
+    for (path, value) in [
+        ("/name", json!("")),
+        ("/sketch/points/0/fixed", json!(false)),
+        ("/sketch/curves/0/fixed", json!(false)),
+        ("/sketch/curves/0/c", json!(999)),
+        ("/sketch/curves/0/r", json!(-1)),
+        ("/sketch/curves/0/id", json!("c2")),
+        ("/sketch/points/0/pos", json!([1e30, 0])),
+    ] {
+        let mut bad = original.clone();
+        *bad.pointer_mut(path).unwrap() = value;
+        cases.push(json!({"sketch":1,"profile_snapshot":bad}));
+    }
+    for (key, value) in [("link", json!("face-reference")), ("exprs", json!({"x":"frame_width"}))] {
+        let mut bad = original.clone();
+        bad["sketch"]["points"][0][key] = value;
+        cases.push(json!({"sketch":1,"profile_snapshot":bad}));
+    }
+    cases.push(json!({"sketch":1,"profile_snapshot":original,"profile":tube()}));
+    for params in cases {
+        assert!(s.execute("frame.member", &params).is_err(), "{params}");
+        assert_eq!(s.doc.to_json(), before, "a refused snapshot leaves the design unchanged");
+    }
+}
+
+#[test]
+fn profile_snapshot_keeps_a_circular_arc_exact_and_supports_native_groups() {
+    let mut s = new_sketch();
+    let a = run(&mut s, "sketch.line", json!({"points":[[0,0],[100,0]]}))["created"]["curves"][0].clone();
+    let b = run(&mut s, "sketch.line", json!({"points":[[0,50],[100,50]]}))["created"]["curves"][0].clone();
+    run(&mut s, "sketch.finish", json!({}));
+    let snapshot = json!({"name":"Half round","sketch":{
+        "points":[
+            {"id":"origin","pos":[0,0],"fixed":true},
+            {"id":"p1","pos":[10,0],"fixed":true},
+            {"id":"p2","pos":[-10,0],"fixed":true}
+        ],
+        "curves":[
+            {"id":"a1","type":"arc","c":0,"a":1,"b":2,"fixed":true},
+            {"id":"l1","type":"line","a":2,"b":1,"fixed":true}
+        ],"constraints":[]
+    }});
+    run(
+        &mut s,
+        "frame.member",
+        json!({"sketch":1,"profile_snapshot":snapshot,
+        "groups":[{"lines":[a],"anchor":"bottom"},{"lines":[b],"anchor":"center","angle":"90 deg"}]}),
+    );
+    assert_eq!(bodies(&mut s).len(), 2);
+    assert!(rel(total_volume(&mut s), 2.0 * 0.5 * PI * 100.0 * 100.0) < MEASURED);
+}
+
 /// The areas of the active sketch's profiles, largest first.
 fn profile_areas(s: &Session) -> Vec<f64> {
     let id = s.active_sketch.unwrap();

@@ -71,3 +71,59 @@ fn other_clicks_and_other_platforms_are_left_alone() {
     assert!(ControlClick { enabled: false, press: None }.remap(&mut got).is_empty());
     assert_eq!(got, control_click);
 }
+
+#[test]
+fn queued_mouse_input_keeps_typing_clicks_and_new_events_in_order() {
+    let mut app = crate::SolveApp::new(Default::default(), Default::default());
+    let click = vec![
+        Event::PointerMoved(pos2(100.0, 100.0)),
+        button(100.0, PointerButton::Primary, true, Modifiers::NONE),
+        button(100.0, PointerButton::Primary, false, Modifiers::NONE),
+    ];
+    let mut raw = egui::RawInput { events: vec![Event::Text("40".into())], ..Default::default() };
+    raw.events.extend(click.clone());
+    raw.events.push(Event::Text(" mm".into()));
+    app.raw_input_hook(&mut raw);
+    assert_eq!(raw.events, vec![Event::Text("40".into()), click[0].clone()], "typing reaches its field before the click");
+    let mut next = egui::RawInput { events: vec![Event::PointerMoved(pos2(200.0, 100.0))], ..Default::default() };
+    app.raw_input_hook(&mut next);
+    assert_eq!(next.events, click[1..], "the complete click reaches its own location first");
+    let mut last = egui::RawInput::default();
+    app.raw_input_hook(&mut last);
+    assert_eq!(last.events, vec![Event::Text(" mm".into()), Event::PointerMoved(pos2(200.0, 100.0))]);
+    assert!(app.held_click.is_empty());
+}
+
+#[test]
+fn mouse_drag_keeps_motion_through_release_and_defers_only_later_input() {
+    let mut app = crate::SolveApp::new(Default::default(), Default::default());
+    let drag = vec![
+        button(100.0, PointerButton::Primary, true, Modifiers::NONE),
+        Event::PointerMoved(pos2(200.0, 100.0)),
+        button(200.0, PointerButton::Primary, false, Modifiers::NONE),
+    ];
+    let later = Event::PointerMoved(pos2(300.0, 100.0));
+    let mut raw = egui::RawInput { events: drag.clone(), ..Default::default() };
+    raw.events.push(later.clone());
+    app.raw_input_hook(&mut raw);
+    assert_eq!(raw.events, drag);
+    let mut next = egui::RawInput::default();
+    app.raw_input_hook(&mut next);
+    assert_eq!(next.events, vec![later]);
+}
+
+#[test]
+fn queued_control_click_retains_the_secondary_click_mapping() {
+    let mut app = crate::SolveApp::new(Default::default(), Default::default());
+    app.control_click.enabled = true;
+    let mut raw = egui::RawInput {
+        events: vec![button(100.0, PointerButton::Primary, true, CTRL), button(100.0, PointerButton::Primary, false, CTRL)],
+        ..Default::default()
+    };
+    app.raw_input_hook(&mut raw);
+    assert_eq!(
+        raw.events,
+        vec![button(100.0, PointerButton::Secondary, true, Modifiers::NONE), button(100.0, PointerButton::Secondary, false, Modifiers::NONE),]
+    );
+    assert!(app.held_click.is_empty());
+}

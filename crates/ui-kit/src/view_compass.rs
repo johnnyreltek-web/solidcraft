@@ -58,6 +58,8 @@ pub enum ViewAction {
     Home,
     /// Turn the view half a turn about its screen's vertical axis.
     TurnAround,
+    /// Roll the picture by one quarter turn about the line of sight.
+    Roll { clockwise: bool },
 }
 
 /// One frame's step of a drag on a view navigator: `(dx, dy)` screen points (`snap`: Shift was
@@ -86,6 +88,8 @@ pub struct Compass {
     pub home_label: String,
     /// Show a Turn Around chip when the host supplies its translated hover text.
     pub turn_around_label: Option<String>,
+    /// Hover text for the counterclockwise and clockwise roll chips.
+    pub roll_labels: Option<[String; 2]>,
 }
 
 /// Where a tip is drawn from the centre, for a direction posed on screen as `[right, down]`
@@ -181,6 +185,37 @@ pub fn show(ui: &mut egui::Ui, compass: &Compass) -> Option<ViewAction> {
         }
         if may_act && response.backing_on_hover_text(label).clicked() {
             action = Some(ViewAction::TurnAround);
+        }
+    }
+    if let Some(labels) = &compass.roll_labels {
+        for (index, label) in labels.iter().enumerate() {
+            let clockwise = index == 1;
+            let side = if clockwise { 1.0 } else { -1.0 };
+            let center = c + vec2(side * 37.0, 37.0);
+            let rect = Rect::from_center_size(center, vec2(22.0, 22.0));
+            let id = if clockwise { "axis_view:roll_clockwise" } else { "axis_view:roll_counterclockwise" };
+            solidcraft_ui_registry::publish_target(id, rect);
+            let response = ui.interact(rect, ui.scope_id().with(id), Sense::click());
+            let may_act = hover.is_some() && !compass.orbiting;
+            let hovered = may_act && response.hovered();
+            painter.circle(center, 12.0, t.overlay.gamma_multiply(if hovered { 0.9 } else { 0.5 }), Stroke::new(1.0, t.border));
+            let arc = (0..=16)
+                .map(|step| {
+                    let angle = (-165.0_f32 + step as f32 * 15.0).to_radians();
+                    center + vec2(side * angle.cos(), angle.sin()) * 5.0
+                })
+                .collect();
+            let stroke = Stroke::new(1.5, t.icon);
+            painter.add(egui::Shape::line(arc, stroke));
+            let tip = center + vec2(side * 1.29, 4.83);
+            painter.line_segment([tip, tip + vec2(side * 3.4, -2.0)], stroke);
+            painter.line_segment([tip, tip + vec2(side * 3.7, 1.5)], stroke);
+            if hovered {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if response.backing_on_hover_text(label).clicked() && may_act {
+                action = Some(ViewAction::Roll { clockwise });
+            }
         }
     }
     action
@@ -288,6 +323,7 @@ mod tests {
                     snap_hint: true,
                     home_label: "Home".into(),
                     turn_around_label: shown.then(|| "Turn around".into()),
+                    roll_labels: Some(["Roll counterclockwise".into(), "Roll clockwise".into()]),
                 };
                 out = (show(ui, &compass), orbit);
             },
@@ -313,6 +349,8 @@ mod tests {
         assert_eq!(click(&ctx, z), Some(ViewAction::Snap { axis: "z", direction: [0.0, 0.0, 1.0] }));
         assert_eq!(click(&ctx, pos2(163.0, 163.0)), Some(ViewAction::Home));
         assert_eq!(click(&ctx, pos2(237.0, 163.0)), Some(ViewAction::TurnAround));
+        assert_eq!(click(&ctx, pos2(163.0, 237.0)), Some(ViewAction::Roll { clockwise: false }));
+        assert_eq!(click(&ctx, pos2(237.0, 237.0)), Some(ViewAction::Roll { clockwise: true }));
         assert_eq!(click(&ctx, pos2(20.0, 20.0)), None, "outside the compass");
     }
 

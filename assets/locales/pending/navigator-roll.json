@@ -1,0 +1,10 @@
+{
+  "en": {
+    "ui.navigator_roll_clockwise": "Roll 90° clockwise",
+    "ui.navigator_roll_counterclockwise": "Roll 90° counterclockwise"
+  },
+  "es": {
+    "ui.navigator_roll_clockwise": "Girar la vista 90° en sentido horario",
+    "ui.navigator_roll_counterclockwise": "Girar la vista 90° en sentido antihorario"
+  }
+}

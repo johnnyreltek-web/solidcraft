@@ -102,6 +102,8 @@ pub struct Request {
     pub(crate) param_check: Option<(solidcraft_engine::schema::ParamCheck, Vec<String>)>,
     /// The status line once the file is in, in place of the usual one.
     pub note: Option<String>,
+    /// The interactive Insert Design picker opens placement after the part loads.
+    pub(crate) place_inserted_design: bool,
     /// Which operation it is ([`crate::operations::serial`]).
     pub serial: u64,
     /// The tab whose design it works on (an insert, an export, Update Links), set when it is
@@ -145,6 +147,7 @@ impl Request {
             gerber: false,
             param_check: None,
             note: None,
+            place_inserted_design: false,
             serial: crate::operations::serial(),
             tab: None,
             tries: 0,
@@ -160,6 +163,19 @@ impl Request {
     /// It adds what it reads to the active design.
     fn insert(&self) -> bool {
         matches!(self.kind, Kind::Insert | Kind::InsertDesign)
+    }
+
+    fn open_insert_placement(&self, app: &mut SolveApp, result: &Value) {
+        if !self.place_inserted_design || app.dialog.is_some() {
+            return;
+        }
+        let Some(occurrence) = result.get("occurrence").and_then(Value::as_u64) else { return };
+        let mut path = app.session.active_occurrence_path.clone().unwrap_or_default();
+        path.push(occurrence);
+        if app.session.occurrence_placement(&path).is_err() {
+            path = crate::dialogs_move::first_path(app, occurrence);
+        }
+        crate::dialogs_move::open_on_occurrence(app, path, true);
     }
     /// It reads files the active design already names, and changes that design in place.
     fn reads_again(&self) -> bool {
@@ -707,6 +723,9 @@ pub fn begin_request(app: &mut SolveApp, mut request: Request) -> Result<(), Str
                     if let Some(note) = &request.note {
                         app.set_status(note.clone(), false);
                     }
+                    if let Ok(result) = &r {
+                        request.open_insert_placement(app, result);
+                    }
                 }
                 r
             }
@@ -892,6 +911,7 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
         gerber: false,
         param_check,
         note: None,
+        place_inserted_design: false,
         serial: crate::operations::serial(),
         tab: None,
         tries: 0,
@@ -2040,6 +2060,7 @@ fn land_now(app: &mut SolveApp, mut running: Running) {
                 if request.kind == Kind::Open {
                     crate::documents::design_opened(app, &request.path);
                 }
+                request.open_insert_placement(app, &made.result);
                 request.answer(Ok(made.result));
             }
             Ok(_) => {

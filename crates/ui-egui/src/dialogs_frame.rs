@@ -105,6 +105,7 @@ const SAME_LOCATE: f64 = 1e-5;
 /// A group of lines and how its members sit on them, while another group is shown.
 #[derive(Clone, Debug, Default)]
 pub struct Group {
+    pub library_browser: crate::frame_library::Browser,
     pub lines: Vec<Sel>,
     pub anchor: usize,
     /// The located profile point (`frame.member`'s `locate`), shown as Offset A and B while the
@@ -119,6 +120,7 @@ pub struct Group {
 /// The Frame Member dialog's values (the picks are its selection inputs).
 #[derive(Clone, Debug)]
 pub struct Member {
+    pub library: crate::frame_library::State,
     /// Every line of the frame sketch, now and as lines are added, not only the lines picked.
     pub all: bool,
     /// The picked curves, in pick order, make one continuous member along a tangent path.
@@ -479,6 +481,7 @@ impl Member {
         // A rectangular tube is the most common member.
         let kind = frame::profile_kinds().iter().position(|k| k.kind == "rect_tube").unwrap_or(0);
         Member {
+            library: Default::default(),
             all: false,
             continuous: false,
             kind,
@@ -564,7 +567,15 @@ impl Member {
     /// The shown group as it stands, its lines from the Lines input.
     fn shown(&self, inputs: &[SelInput]) -> Group {
         let lines = crate::selection::items(inputs, 0).to_vec();
-        Group { lines, anchor: self.anchor, locate: self.locate, angle: self.angle.clone(), mirror: self.mirror, name: self.name.clone() }
+        Group {
+            library_browser: self.library.browser,
+            lines,
+            anchor: self.anchor,
+            locate: self.locate,
+            angle: self.angle.clone(),
+            mirror: self.mirror,
+            name: self.name.clone(),
+        }
     }
 
     /// Every group as it stands, the shown one included (none is while `current` is past the end).
@@ -588,6 +599,7 @@ impl Member {
         self.angle = g.angle;
         self.mirror = g.mirror;
         self.name = g.name;
+        self.library.browser = g.library_browser;
         // Offset A and B are worked out again from this group's `locate` (`sync_offset`), so the
         // last group's typed offset is not applied to this one.
         self.offset = Default::default();
@@ -1279,6 +1291,7 @@ fn member_rows(app: &SolveApp, ui: &mut egui::Ui, m: &mut Member, inputs: &mut [
         form_row(ui, "All Lines", |ui| check(ui, &mut m.all));
     }
     group_rows(ui, m, inputs);
+    crate::frame_library::rows(app, ui, m, inputs);
     let continuous_label = app.tr("ui.frame.continuous").to_string();
     form_row(ui, &continuous_label, |ui| check(ui, &mut m.continuous));
     let picked = !crate::selection::items(inputs, 1).is_empty();
@@ -1289,10 +1302,15 @@ fn member_rows(app: &SolveApp, ui: &mut egui::Ui, m: &mut Member, inputs: &mut [
         if !on {
             m.whole = None;
         }
+    } else if !picked && m.library.snapshot.is_some() {
+        form_row(ui, "Section", |ui| {
+            ui.label(m.library.snapshot.as_ref().and_then(|s| s.get("name")).and_then(Value::as_str).unwrap_or_default());
+        });
     } else if !picked {
         let kinds = frame::profile_kinds();
         let labels: Vec<&str> = kinds.iter().map(|k| k.label).collect();
-        choice_row(ui, "Profile", "frame_profile", &mut m.kind, &labels);
+        let label = if crate::frame_library::available(app) { "ui.frame_library.shape" } else { "Profile" };
+        choice_row(ui, label, "frame_profile", &mut m.kind, &labels);
         if let (Some(k), Some(values)) = (kinds.get(m.kind), m.dims.get_mut(m.kind)) {
             for (i, (name, v)) in k.required.iter().chain(k.optional).zip(values.iter_mut()).enumerate() {
                 let label = frame::dimension_label(name);
@@ -1630,6 +1648,8 @@ fn flat_commands(app: &SolveApp, m: &Member, inputs: &[SelInput], extra: &Map<St
         if !section.is_empty() {
             p["profiles"] = json!(section.iter().map(|x| x.1).collect::<Vec<_>>());
         }
+    } else if let Some(snapshot) = &m.library.snapshot {
+        p["profile_snapshot"] = snapshot.clone();
     } else {
         let kinds = frame::profile_kinds();
         let (k, values) = kinds.get(m.kind).zip(m.dims.get(m.kind)).ok_or("choose a profile")?;
@@ -1823,6 +1843,9 @@ pub fn for_feature(app: &SolveApp, feature: &solidcraft_engine::doc::Feature) ->
         i.items = items;
     }
     match profile {
+        MemberProfile::Snapshot { name, sketch } => {
+            m.library.snapshot = Some(json!({"name":name,"sketch":sketch}));
+        }
         MemberProfile::Library { profile } => {
             let kinds = frame::profile_kinds();
             if let Some((index, k)) = kinds.iter().enumerate().find(|(_, k)| k.kind == profile.kind)
@@ -1910,6 +1933,7 @@ pub fn for_feature(app: &SolveApp, feature: &solidcraft_engine::doc::Feature) ->
             .map(|g| {
                 let ids = if g.lines.is_empty() { frame::member_line_ids(&st, kind).unwrap_or_default() } else { g.lines.clone() };
                 Group {
+                    library_browser: Default::default(),
                     lines: ids.into_iter().map(|id| Sel::ExternalSketchCurve { sketch: path.0, id }).collect(),
                     anchor: anchor_index(g.anchor).unwrap_or(0),
                     locate: g.locate,

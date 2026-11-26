@@ -793,6 +793,12 @@ fn unisolate(s: &mut Session, p: &Value, visible: bool) -> Result<Value> {
 fn visibility(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "browser.visibility";
     let visible = bool_(p, "visible").ok_or_else(|| bad(cmd, "`visible` must be true or false"))?;
+    if p.get("transparent").is_some()
+        && (p.get("paths").is_none()
+            || ["items", "folder", "joints", "tree_folders", "features", "path", "isolate", "unisolate"].iter().any(|key| p.get(*key).is_some()))
+    {
+        return Err(bad(cmd, "transparency requires occurrence paths as its only target"));
+    }
     if bool_(p, "unisolate").unwrap_or(false) {
         return unisolate(s, p, visible);
     }
@@ -862,6 +868,20 @@ fn visibility(s: &mut Session, p: &Value) -> Result<Value> {
                 Ok(path)
             })
             .collect::<Result<_>>()?;
+        if let Some(transparent) = bool_(p, "transparent") {
+            let overrides = &mut s.visibility.transparent_occurrences;
+            for path in &paths {
+                if transparent {
+                    if !overrides.contains(path) {
+                        overrides.push(path.clone());
+                    }
+                } else {
+                    overrides.retain(|existing| existing != path);
+                }
+            }
+            let visibility = VisibilityState::from(&s.visibility);
+            return reply(cmd, BrowserVisibilityResult { visible, changed: Some(paths.len()), isolated: None, visibility, param_warnings: Vec::new() });
+        }
         if bool_(p, "isolate").unwrap_or(false) {
             if !visible {
                 return Err(bad(cmd, "isolate requires visible:true"));

@@ -140,11 +140,23 @@ fn declared(plugin: &plugins::Plugin) -> Vec<Item> {
             if items.iter().any(|item: &Item| item.command == command && item.slot == slot) {
                 continue;
             }
+            let title = match slot {
+                Slot::Ribbon(_) => entry
+                    .slots
+                    .iter()
+                    .find_map(|slot| match slot {
+                        // File and Help declare host destinations, not command titles.
+                        UiSlot::Menu { name } if !name.trim().is_empty() && menu_name(name).is_none() => Some(name.trim().to_owned()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| entry.name.clone()),
+                Slot::Menu(_) => entry.name.clone(),
+            };
             items.push(Item {
                 command,
                 plugin: plugin.name.clone(),
-                entry: entry.name.clone(),
-                label: format!("{} · {}", plugin.name, entry.name),
+                entry: title.clone(),
+                label: format!("{} · {title}", plugin.name),
                 slot,
                 importer: entry.kind == solidcraft_engine::plugin::EntryKind::Importer,
                 icon: crate::plugin_menu::command_icon(plugin, entry).to_owned(),
@@ -369,12 +381,13 @@ pub(crate) fn export_slots(app: &SolveApp) -> Vec<(String, String)> {
     rows
 }
 
-/// Open the same input-schema dialog as the Plugins menu, resolving the namespaced entry id.
+/// Activate a namespaced entry: input-schema dialog, or direct run for a read with no fields.
 pub(crate) fn begin(app: &mut SolveApp, command: &str) {
     if solidcraft_engine::find_command(command).is_some() {
         return;
     }
     app.plugin_menu.listed = crate::plugin_menu::list(app, app.session.plugin_state.plugins_dir().as_deref());
+    solidcraft_engine::plugin::sync_panels(&mut app.session);
     let entry = app.plugin_menu.listed.iter().enumerate().find_map(|(p, plugin)| {
         if plugin.disabled {
             return None;
@@ -382,7 +395,7 @@ pub(crate) fn begin(app: &mut SolveApp, command: &str) {
         plugin.entries.iter().position(|entry| format!("{}.{}", plugin.id, entry.name) == command).map(|e| (p, e))
     });
     if let Some((p, e)) = entry {
-        crate::plugin_menu::open_entry(app, p, e);
+        crate::plugin_menu::activate_entry(app, p, e);
     }
 }
 
@@ -587,6 +600,49 @@ mod tests {
         assert_eq!(items[1].slot, Slot::Menu("File"));
         assert_eq!(items[2].slot, Slot::Menu("Help"));
         assert_eq!(menu_name("Manufacturing"), None);
+    }
+
+    #[test]
+    fn ribbon_placement_uses_the_declared_display_title() {
+        let mut plugin = crate::plugins::Plugin {
+            id: "profile-library".into(),
+            name: "Profile Library".into(),
+            version: "0.2.0".into(),
+            description: String::new(),
+            path: String::new(),
+            approval: String::new(),
+            disabled: false,
+            groups: Default::default(),
+            entries: serde_json::from_value(json!([
+                {"name":"library","effect":"read","slots":[{"kind":"menu","name":"Manage Profiles"},{"kind":"ribbon","name":"Weldments"}]},
+                {"name":"save-profile","effect":"edit","slots":[{"kind":"menu","name":"Add Size"}]}
+            ]))
+            .unwrap(),
+            ribbon_groups: Vec::new(),
+            images: Default::default(),
+            swatches: Default::default(),
+            updates: None,
+            themes: Vec::new(),
+            shaders: Vec::new(),
+            tints: Vec::new(),
+            panels: Vec::new(),
+            shader_settings: Default::default(),
+            pictures: Vec::new(),
+        };
+        let items = declared(&plugin);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].command, "profile-library.library");
+        assert_eq!(items[0].entry, "Manage Profiles");
+        assert_eq!(items[0].label, "Profile Library · Manage Profiles");
+        assert_eq!(items[0].slot, Slot::Ribbon("WELDMENTS"));
+        plugin.entries[0].slots = serde_json::from_value(json!([
+            {"kind":"menu","name":"File"}, {"kind":"ribbon","name":"Weldments"}
+        ]))
+        .unwrap();
+        let items = declared(&plugin);
+        assert!(items.iter().all(|item| item.label == "Profile Library · library"), "host menu destinations are not display titles");
+        plugin.entries[0].slots.clear();
+        assert!(declared(&plugin).is_empty());
     }
 
     /// A plugin folder deleted by hand takes the pictures chosen for its backgrounds with it.

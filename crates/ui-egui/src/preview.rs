@@ -697,6 +697,9 @@ fn stream_key(cmds: &[(String, Value)], revision: u64, colors: Colors) -> Option
             // another (a spacing of 1 on the way to 15 over an 80 mm extent makes 81 copies) is
             // left behind as soon as the next is typed, not waited for (#8523).
             "solid.pattern.rectangular" => &[],
+            // A frame's joined ends can take seconds to rebuild. A new dimension or path
+            // cancels the old run; keep every input in the key so obsolete members never show.
+            "frame.member" => &[],
             _ => return None,
         };
         let params = params.as_object_mut()?;
@@ -1899,6 +1902,93 @@ mod tests {
         assert_ne!(pv.key, 9, "the viewport takes the empty scene");
         pv.poll(2, None);
         assert_eq!(pv.error.as_deref(), Some("current invalid expression"), "current errors still prevent invalid Apply");
+    }
+
+    #[test]
+    fn frame_preview_changes_replace_the_entire_setup() {
+        let params = json!({
+            "sketch": 1, "lines": ["w1", "w2"],
+            "profile": {"kind": "rect_tube", "width": "2 in", "height": "2 in", "wall": "1/8 in"},
+            "anchor": "center", "angle": "0 deg", "corner": "mitre"
+        });
+        for editing in [false, true] {
+            let commands = |p: Value| {
+                if editing {
+                    vec![("timeline.redefine".into(), json!({"feature": 7, "command": "frame.member", "params": p}))]
+                } else {
+                    vec![("frame.member".into(), p)]
+                }
+            };
+            let original = commands(params.clone());
+            let key = stream_key(&original, 10, colors()).expect("frame previews can leave obsolete work behind");
+            for (pointer, value) in [
+                ("/profile/width", json!("3 in")),
+                ("/profile/height", json!("3 in")),
+                ("/profile/wall", json!("3/16 in")),
+                ("/lines", json!(["w1"])),
+                ("/anchor", json!("bottom_left")),
+                ("/angle", json!("90 deg")),
+                ("/corner", json!("butt")),
+            ] {
+                let mut changed = params.clone();
+                *changed.pointer_mut(pointer).unwrap() = value;
+                assert_ne!(Some(key), stream_key(&commands(changed), 10, colors()), "{pointer} must not show an obsolete frame");
+            }
+            let mut grouped = params.clone();
+            grouped.as_object_mut().unwrap().remove("lines");
+            grouped["groups"] = json!([{"lines": ["w1"]}, {"lines": ["w2"], "anchor": "bottom_left"}]);
+            assert_ne!(Some(key), stream_key(&commands(grouped), 10, colors()), "another group layout is another setup");
+            assert_ne!(Some(key), stream_key(&original, 11, colors()), "another document revision is another setup");
+            if editing {
+                let mut other_feature = original;
+                other_feature[0].1["feature"] = json!(8);
+                assert_ne!(Some(key), stream_key(&other_feature, 10, colors()), "another edited feature is another setup");
+            }
+        }
+    }
+
+    #[test]
+    fn frame_preview_cancels_obsolete_work_without_showing_its_result() {
+        let commands = |width| {
+            vec![(
+                "timeline.redefine".into(),
+                json!({"feature": 7, "command": "frame.member", "params": {
+                    "sketch": 1, "lines": ["w1", "w2"], "corner": "mitre",
+                    "profile": {"kind": "rect_tube", "width": width, "height": 50, "wall": 3}
+                }}),
+            )]
+        };
+        let old = commands(50);
+        let current = commands(60);
+        let old_key = job_key(&old, 10, colors());
+        let current_key = job_key(&current, 10, colors());
+        let old_setup = stream_key(&old, 10, colors());
+        let current_setup = stream_key(&current, 10, colors());
+        for obsolete in [Ok(pose()), Err("obsolete frame failed".into())] {
+            let mut pv = PreviewState::default();
+            let progress = Arc::new(Progress::default());
+            let (tx, rx) = std::sync::mpsc::channel();
+            pv.running = Some((old_key, rx));
+            pv.running_progress = Some(progress.clone());
+            pv.running_stream_key = old_setup;
+            pv.poll_at(old_key, old_setup, 0.0);
+            assert!(pv.running.is_some() && !progress.is_cancelled(), "unchanged inputs keep computing");
+            pv.poll_at(current_key, current_setup, 0.0);
+            assert!(progress.is_cancelled(), "new frame inputs cancel the outdated kernel work immediately");
+            assert!(pv.running.is_none(), "the newest frame can start without waiting for the old one");
+            tx.send(obsolete).unwrap();
+            pv.poll_at(current_key, current_setup, 0.0);
+            assert!(pv.detached.is_empty());
+            assert!(!pv.active && pv.error.is_none() && pv.shown_key.is_none(), "obsolete geometry and errors stay hidden");
+
+            let (tx, rx) = std::sync::mpsc::channel();
+            pv.running = Some((current_key, rx));
+            pv.running_stream_key = current_setup;
+            tx.send(Ok(pose())).unwrap();
+            pv.poll_at(current_key, current_setup, 0.0);
+            assert!(pv.active && pv.error.is_none());
+            assert_eq!(pv.shown_key, Some(current_key), "the latest exact result is shown");
+        }
     }
 
     #[test]

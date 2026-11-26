@@ -230,6 +230,7 @@ mod extrude_new_sketch_tests;
 mod extrude_preview;
 mod file_load;
 mod file_picker;
+pub mod frame_library;
 pub(crate) mod frame_watch;
 #[cfg(test)]
 mod history_off_thread_tests;
@@ -1023,7 +1024,7 @@ pub struct SolveApp {
     pub synthetic: Vec<egui::Event>,
     /// The modifiers of the synthetic press in progress (a Ctrl-drag keeps Ctrl while it moves).
     pub synthetic_mods: egui::Modifiers,
-    /// A click that came in the same frame as typing before it, held for the next frame.
+    /// Input following typing or a completed mouse click, held in order for the next frame.
     held_click: Vec<egui::Event>,
     control_click: control_click::ControlClick,
     /// Pen-tip release positions from the platform, for this frame and for a held click.
@@ -2437,6 +2438,7 @@ impl SolveApp {
         let mut request = file_load::Request::new(path, file_load::Kind::InsertDesign);
         request.allow_hosts = solidcraft_engine::io::vfs::network_host(path).into_iter().collect();
         request.note = note;
+        request.place_inserted_design = true;
         // A request that could not be queued has said why in the status line.
         let _ = file_load::begin_request(self, request);
     }
@@ -4458,6 +4460,29 @@ impl SolveApp {
         self.frame_view_bounds(home, None);
     }
 
+    /// Recall a saved camera in the active up-axis convention, retaining its world orientation.
+    pub(crate) fn animate_saved_camera(&mut self, saved: &solidcraft_engine::doc::NamedView) {
+        let mut camera = Camera {
+            target: saved.target,
+            yaw: saved.yaw,
+            pitch: saved.pitch,
+            roll: saved.roll,
+            distance: saved.distance,
+            fov: saved.fov,
+            up: saved.up,
+        };
+        if camera.up != self.cam.up {
+            use solidcraft_viewport::vec::Vec3Ops;
+
+            let (right, _, back) = camera.basis();
+            camera.up = self.cam.up;
+            camera = camera.looking_from(back);
+            let (base_right, base_up, _) = camera.basis();
+            camera.roll = right.dot(base_up).atan2(right.dot(base_right));
+        }
+        self.animate_to(camera);
+    }
+
     /// Frame a preview's result through the same path, using its bounds before it is committed.
     fn frame_view_bounds(&mut self, home: bool, preview_bounds: Option<solidcraft_engine::geom::Aabb3>) {
         if render_workspace::result_active(self) {
@@ -4488,6 +4513,13 @@ impl SolveApp {
             return;
         }
         self.pending_fit = None;
+        if home
+            && preview_bounds.is_none()
+            && let Some(saved) = self.session.doc.named_views.iter().find(|view| view.name == "Home").cloned()
+        {
+            self.animate_saved_camera(&saved);
+            return;
+        }
         let mut to = self.cam;
         if home {
             to.set_view(StandardView::Iso);
@@ -4747,6 +4779,7 @@ impl SolveApp {
         self.synthetic_input(raw);
         finite_input(raw);
         self.hold_click_after_typing(raw);
+        self.hold_input_after_click(raw);
         self.held_click.extend(later);
         issue_report::hold_input(self, raw);
         // Over a quiet view, pointer motion asks egui for no frame after this one: the window
@@ -4772,6 +4805,25 @@ impl SolveApp {
         {
             self.held_click = raw.events.split_off(i);
             self.held_pen_release = self.pen_release.take();
+        }
+    }
+
+    /// A widget reports one click per frame. Two mouse clicks queued during a busy frame
+    /// otherwise collapse into the last one; even motion after a release can move the pick
+    /// to the next target. Finish this click before feeding the input that followed it.
+    /// Pen and touch input keep their platform-specific release/gesture handling.
+    fn hold_input_after_click(&mut self, raw: &mut egui::RawInput) {
+        if self.pen_release.is_some() || raw.events.iter().any(|event| matches!(event, egui::Event::Touch { .. })) {
+            return;
+        }
+        if let Some(at) = raw
+            .events
+            .iter()
+            .position(|event| matches!(event, egui::Event::PointerButton { button: egui::PointerButton::Primary, pressed: false, .. }))
+        {
+            let mut later = raw.events.split_off(at + 1);
+            later.append(&mut self.held_click);
+            self.held_click = later;
         }
     }
 

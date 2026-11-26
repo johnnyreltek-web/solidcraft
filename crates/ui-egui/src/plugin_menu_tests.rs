@@ -313,6 +313,112 @@ fn requested_forms_keep_the_dispatch_revision_across_edits_and_deferred_replies(
 }
 
 #[test]
+fn panel_requested_forms_keep_the_dispatch_design_and_revision() {
+    for destination in ["same", "switch", "closed"] {
+        let mut h = box_and_pick_plugin();
+        let session = h.app.session.uid;
+        let queued_revision = h.app.session.design_revision();
+        run_panel(&mut h.app, "inserts.seats".into(), json!({})).unwrap();
+        let request = h.app.control_held.pop_front().unwrap();
+        h.app.run("solid.box", json!({"length":1,"width":1,"height":1})).unwrap();
+        check_dispatch(&mut h.app, &request).unwrap();
+        let dispatched = h.app.session.design_revision();
+        assert_ne!(queued_revision, dispatched);
+        assert_eq!(h.app.plugin_menu.panel_runs[0].running.source_guard.as_ref().unwrap().revision, dispatched);
+        assert!(take_interactive_run(&mut h.app, request.serial));
+        h.app.run("solid.box", json!({"length":2,"width":1,"height":1})).unwrap();
+        request.reply.send(json!({"ok":true,"result":{"forms":[{"plugin":"inserts","entry":"seats","params":{"depth":7}}]}})).unwrap();
+        if destination != "same" {
+            crate::documents::open_tab(&mut h.app, solidcraft_engine::Session::default()).unwrap();
+            poll(&mut h.app);
+            assert!(h.app.plugin_menu.dialogs.is_empty(), "a panel never opens a form on the wrong design");
+            assert!(h.app.plugin_menu.panel_runs[0].running.received.is_some());
+            if destination == "closed" {
+                crate::documents::close(&mut h.app, 0, true);
+                poll(&mut h.app);
+                assert!(h.app.plugin_menu.panel_runs.is_empty() && h.app.plugin_menu.dialogs.is_empty(), "closed designs discard deferred forms");
+                continue;
+            }
+            crate::documents::switch(&mut h.app, 0);
+        }
+        poll(&mut h.app);
+        let dialog = h.app.plugin_menu.dialog().unwrap();
+        assert_eq!(dialog.session, session);
+        assert_eq!(dialog.form_guard.as_ref().unwrap().revision, dispatched);
+        assert!(dialog.changed, "the form asks for review after an intervening design change");
+        assert!(h.app.plugin_menu.panel_runs.is_empty());
+    }
+}
+
+#[test]
+fn panel_requests_queued_for_another_design_cannot_dispatch() {
+    let mut h = box_and_pick_plugin();
+    run_panel(&mut h.app, "inserts.seats".into(), json!({})).unwrap();
+    let request = h.app.control_held.pop_front().unwrap();
+    crate::documents::open_tab(&mut h.app, solidcraft_engine::Session::default()).unwrap();
+    assert!(check_dispatch(&mut h.app, &request).is_err());
+    assert!(!take_interactive_run(&mut h.app, request.serial));
+    request.reply.send(json!({"ok":false,"error":"another design"})).unwrap();
+    poll(&mut h.app);
+    assert!(h.app.plugin_menu.panel_runs.is_empty() && h.app.plugin_menu.dialogs.is_empty());
+}
+
+#[test]
+fn only_panel_reads_without_inputs_activate_without_a_dialog() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.plugin_menu.listed = vec![listed("library", vec![entry("manage", "read", json!([]))])];
+    let panel: solidcraft_engine::plugin::ui::Declarations = serde_json::from_value(json!({
+        "ui_version":1,"panels":[{"id":"library","title":"Profiles","zones":["right"],
+            "layout":{"root":0,"nodes":[{"widget":{"text":"Profiles"}}]}}]
+    }))
+    .unwrap();
+    h.app.session.plugin_state.panels.insert(
+        "library".into(),
+        solidcraft_engine::plugin::PanelPackage {
+            name: "Library".into(),
+            approval: String::new(),
+            declarations: panel,
+            data: Default::default(),
+            visible: Default::default(),
+            visibility_revision: Default::default(),
+        },
+    );
+    activate_entry(&mut h.app, 0, 0);
+    assert!(h.app.plugin_menu.dialogs.is_empty(), "a panel launcher asks for no redundant Run click");
+    let request = h.app.control_held.pop_front().unwrap();
+    assert_eq!(request.params["command"], "plugin.run");
+    assert_eq!(request.params["params"]["entry"], "manage");
+    assert_eq!(request.params["params"]["params"], json!({}));
+    assert_eq!(request.params["params"]["approval"], h.app.plugin_menu.listed[0].approval);
+    assert!(take_interactive_run(&mut h.app, request.serial));
+    h.app.plugin_menu.panel_runs.clear();
+
+    for reason in ["no panel", "edit", "hook", "field", "importer", "missing grant"] {
+        let mut entry = entry("manage", "read", json!([]));
+        let plugin = &mut h.app.plugin_menu.listed[0];
+        plugin.groups.clear();
+        let panel = h.app.session.plugin_state.panels.get_mut("library").unwrap();
+        panel.approval = String::new();
+        match reason {
+            "no panel" => panel.approval = "another package".into(),
+            "edit" => entry.effect = solidcraft_engine::plugin::Effect::Edit,
+            "hook" => entry.dialog_hook = true,
+            "field" => entry.input_schema = json!({"type":"object","properties":{"name":{"type":"string"}}}),
+            "importer" => entry.kind = solidcraft_engine::plugin::EntryKind::Importer,
+            "missing grant" => {
+                plugin.groups.insert("file".into());
+            }
+            _ => unreachable!(),
+        }
+        plugin.entries[0] = entry;
+        activate_entry(&mut h.app, 0, 0);
+        assert_eq!(h.app.plugin_menu.dialogs.len(), 1, "{reason}: keep the ordinary form");
+        assert!(h.app.control_held.is_empty(), "{reason}: opening the form executes nothing");
+        h.app.plugin_menu.dialogs.clear();
+    }
+}
+
+#[test]
 fn corrected_raw_selection_preserves_picker_field_identity() {
     let mut h = box_and_pick_plugin();
     h.app.plugin_menu.listed[0].entries[0].input_schema["properties"]["edges"]["minItems"] = json!(0);
@@ -2108,6 +2214,96 @@ pub(crate) fn entry(name: &str, effect: &str, slots: Value) -> solidcraft_engine
     serde_json::from_value(json!({"name":name,"effect":effect,"input_schema":{"type":"object"},"slots":slots})).unwrap()
 }
 
+#[test]
+fn native_frame_catalog_pins_package_approval_and_only_reloads_on_refresh() {
+    let mut h = crate::scenario::Harness::new();
+    let mut plugin = listed("profile-library", vec![entry("catalog", "read", json!([]))]);
+    plugin.path = h.dir.join("profile-library").to_string_lossy().into_owned();
+    plugin.approval = "inspected-library-hash".into();
+    h.app.plugin_menu.listed = vec![plugin.clone()];
+    h.app.session.plugin_state.panels.insert(
+        plugin.id.clone(),
+        solidcraft_engine::plugin::PanelPackage {
+            name: plugin.name.clone(),
+            approval: plugin.approval.clone(),
+            declarations: serde_json::from_value(json!({"ui_version":1,"panels":[]})).unwrap(),
+            data: Default::default(),
+            visible: Default::default(),
+            visibility_revision: Default::default(),
+        },
+    );
+    h.app.start("frame.member");
+    let before = h.app.session.doc.clone();
+    for _ in 0..5 {
+        crate::frame_library::tick(&mut h.app);
+    }
+    assert_eq!(h.app.control_held.len(), 1, "opening a fresh native form queues one catalog read");
+    let request = h.app.control_held.pop_front().unwrap();
+    let expected = json!({"command":"plugin.run","params":{
+        "path":plugin.path,"approval":plugin.approval,"entry":"catalog","params":{}
+    }});
+    assert_eq!(request.params, expected, "a fresh launch carries the inspected package approval");
+    check_dispatch(&mut h.app, &request).unwrap();
+    assert!(take_interactive_run(&mut h.app, request.serial));
+    request.reply.send(json!({"ok":true,"result":{}})).unwrap();
+    poll(&mut h.app);
+    crate::frame_library::tick(&mut h.app);
+    assert!(h.app.control_held.is_empty(), "completion does not trigger another read");
+
+    // A worker supplies pending data before the renderer adopts it. Native rows must
+    // notice adoption even though PanelData's logical equality intentionally does not.
+    let record = json!({"name":"Tube 2","category":"Steel","profile":{
+        "kind":"rect_tube","width":"2 in","height":"2 in","wall":"1/8 in"
+    }});
+    let data = h.app.session.plugin_state.panels.get_mut("profile-library").unwrap().data.entry("library".into()).or_default();
+    data.set_data(&[solidcraft_engine::plugin::ui::Datum {
+        path: "/profiles/0/definition".into(),
+        value: solidcraft_engine::plugin::ui::UiValue::Text(record.to_string()),
+    }])
+    .unwrap();
+    let pending = data.clone();
+
+    // Exercise the actual picker and Refresh control without running a guest or reading files.
+    let mut dialog = h.app.dialog.take().unwrap();
+    let crate::dialogs::Kind::Frame(member) = &mut dialog.kind else { panic!("native frame form") };
+    let ctx = egui::Context::default();
+    let mut paint = |app: &SolveApp, events| {
+        crate::scenario::clear_handles();
+        let input =
+            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))), events, ..Default::default() };
+        ctx.run_ui(input, |ui| crate::frame_library::rows(app, ui, member, &mut dialog.inputs)).textures_delta.clear();
+    };
+    paint(&h.app, Vec::new());
+    let data = h.app.session.plugin_state.panels.get_mut("profile-library").unwrap().data.get_mut("library").unwrap();
+    assert!(data.values().is_empty(), "rows initially see the unadopted snapshot");
+    assert!(data.merge_frame());
+    assert_eq!(*data, pending, "adoption changes visible values but preserves logical equality");
+    paint(&h.app, Vec::new());
+    let at = crate::scenario::rect_of("dialog:widget:ui.frame_library.profile").expect("native profile picker").center();
+    paint(&h.app, crate::test_support::pointer(at, true));
+    paint(&h.app, crate::test_support::pointer(at, false));
+    paint(&h.app, Vec::new());
+    let at = crate::scenario::handle_at("dialog:ui.frame_library.profile:Tube 2").expect("adopted Tube 2 appears before opening Manage Profiles");
+    paint(&h.app, crate::test_support::pointer(at, true));
+    paint(&h.app, crate::test_support::pointer(at, false));
+    paint(
+        &h.app,
+        vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }],
+    );
+    paint(&h.app, Vec::new());
+    let key = format!("dialog:button::{}", h.app.tr("ui.frame_library.refresh"));
+    let at = crate::scenario::rect_of(&key).expect("the real library refresh button").center();
+    paint(&h.app, crate::test_support::pointer(at, true));
+    paint(&h.app, crate::test_support::pointer(at, false));
+    h.app.dialog = Some(dialog);
+    for _ in 0..5 {
+        crate::frame_library::tick(&mut h.app);
+    }
+    assert_eq!(h.app.control_held.len(), 1, "an explicit refresh queues exactly one more read");
+    assert_eq!(h.app.control_held.front().unwrap().params, expected);
+    assert_eq!(h.app.session.doc, before, "catalog reads only populate the form");
+}
+
 pub(crate) fn listed(id: &str, entries: Vec<solidcraft_engine::plugin::Entry>) -> Listed {
     Listed {
         id: id.into(),
@@ -2199,6 +2395,39 @@ fn multiple_entries_without_ribbon_groups_keep_the_original_buttons() {
     assert!(buttons.iter().all(|b| b.icon == "prefs_plugins"));
     choose_ribbon(&mut app, &buttons[1].id);
     assert_eq!(app.plugin_menu.dialog().unwrap().entry, "bevel", "the original button still opens its entry directly");
+}
+
+#[test]
+fn explicit_ribbon_placements_hide_helper_buttons_but_preserve_pins() {
+    let multiple = entry("library", "read", json!([{"kind":"ribbon","name":"Other"},{"kind":"ribbon","name":" model "}]));
+    assert!(ribbon_tab_slot(&multiple), "all slots are considered, including explicit Model placement");
+    let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+    app.plugin_menu.listed = vec![listed(
+        "profile-library",
+        vec![
+            entry("library", "read", json!([{"kind":"menu","name":"Manage Profiles"},{"kind":"ribbon","name":"Weldments"}])),
+            entry("save-profile", "edit", json!([{"kind":"menu","name":"Add Size"}])),
+            entry("catalog", "read", json!([])),
+        ],
+    )];
+    let buttons = ribbon_buttons(&app);
+    assert_eq!(buttons.len(), 1);
+    assert_eq!(buttons[0].id, "plugin_entry:profile-library:library");
+    assert_eq!(buttons[0].label, "Manage Profiles", "the tab name is a destination, not a button title");
+    assert_eq!(app.plugin_menu.listed[0].entries.len(), 3, "helper commands remain callable");
+    for pin in ["profile-library.save-profile", "plugin_entry:profile-library:save-profile"] {
+        app.toolbar_custom.load(&json!({"version":4,"panels":{"DESIGN/MODEL/CREATE":[pin]}}));
+        let buttons = ribbon_buttons(&app);
+        assert_eq!(buttons.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["Manage Profiles", "Add Size"]);
+    }
+}
+
+#[test]
+fn legacy_ribbon_labels_do_not_hide_unplaced_commands() {
+    let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+    app.plugin_menu.listed =
+        vec![listed("hardware", vec![entry("metric", "read", json!([{"kind":"ribbon","name":"Metric"}])), entry("inch", "read", json!([]))])];
+    assert_eq!(ribbon_buttons(&app).iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["Metric", "inch"]);
 }
 
 #[test]
@@ -3007,6 +3236,103 @@ mod native {
         assert_eq!(panels, ["sample"]);
     }
 
+    fn start_native_frame_preview(h: &mut crate::scenario::Harness) {
+        for (command, params) in [
+            ("sketch.create", json!({"plane":"XY","name":"Frame"})),
+            ("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[600,400]})),
+            ("sketch.finish", json!({})),
+        ] {
+            h.app.run(command, params).unwrap();
+        }
+        let sketch = h.app.session.doc.find_feature("Frame").unwrap().id;
+        h.app.session.selection = h
+            .app
+            .session
+            .doc
+            .sketch(sketch)
+            .unwrap()
+            .curves
+            .iter()
+            .map(|curve| solidcraft_engine::Sel::SketchCurve { id: curve.id.clone(), sketch: Some(sketch) })
+            .collect();
+        h.app.start("frame.member");
+        h.frames_after_preview(4);
+        assert!(h.app.preview.active && !h.app.preview.busy && h.app.preview.error.is_none());
+    }
+
+    /// Refreshing library data uses this same read-only panel worker. The open native
+    /// feature's solid preview must stay visible, and unchanged geometry needs no new job.
+    #[test]
+    fn a_read_only_panel_refresh_preserves_the_native_frame_preview() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        let folder = h.dir.join("sample");
+        write_panel_plugin(&folder);
+        h.app.session.plugin_state.plugins_dir = Some(h.dir.clone());
+        let inspected = h.app.run("plugin.inspect", json!({"path":folder.to_string_lossy()})).unwrap();
+        start_native_frame_preview(&mut h);
+        let preview_key = h.app.preview.key;
+        let before = h.app.session.doc.clone();
+        let commands = crate::dialogs::apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+
+        let (release, gate) = std::sync::mpsc::channel();
+        h.app.apply_gate = Some(std::sync::Arc::new(std::sync::Mutex::new(gate)));
+        run_panel(
+            &mut h.app,
+            "plugin.run".into(),
+            json!({
+                "path":folder.to_string_lossy(),"approval":inspected["approval"],"entry":"make","params":{}
+            }),
+        )
+        .unwrap();
+        h.frames(3);
+        let visible_during_read = h.app.preview.active && !h.app.preview.rolled_back && h.app.preview.key == preview_key;
+        // Release the worker before asserting, including on an unfixed build.
+        release.send(()).unwrap();
+        h.app.apply_gate = None;
+        settle(&mut h);
+        h.frames_after_preview(3);
+        assert_eq!(
+            h.app.session.plugin_panels()[0].data.get("/jobs/0/state"),
+            Some(&solidcraft_engine::plugin::ui::UiValue::Text("ready".into())),
+            "the refreshed data still lands"
+        );
+        assert!(std::sync::Arc::ptr_eq(&before, &h.app.session.doc), "a panel read does not replace the design");
+        assert_eq!(crate::dialogs::apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap(), commands);
+        assert!(visible_during_read, "refresh must not hide the open frame's solid preview while the catalog is loading");
+        assert!(h.app.preview.active && !h.app.preview.busy && h.app.preview.error.is_none());
+        assert_eq!(h.app.preview.key, preview_key, "unchanged frame geometry must not rebuild after a read-only panel refresh");
+    }
+
+    #[test]
+    fn a_plugin_design_edit_invalidates_the_native_frame_preview() {
+        let root = package("frame-preview-invalidation");
+        let folder = root.join("boxes");
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.session.plugin_state.plugins_dir = Some(root.clone());
+        let inspected = h.app.run("plugin.inspect", json!({"path":folder.to_string_lossy()})).unwrap();
+        start_native_frame_preview(&mut h);
+        let preview_key = h.app.preview.key;
+        let before = h.app.session.doc.clone();
+        run_panel(
+            &mut h.app,
+            "plugin.run".into(),
+            json!({
+                "path":folder.to_string_lossy(),"approval":inspected["approval"],"entry":"make",
+                "params":{"length":20,"width":10,"height":3}
+            }),
+        )
+        .unwrap();
+        settle(&mut h);
+        h.frames_after_preview(3);
+        assert!(!std::sync::Arc::ptr_eq(&before, &h.app.session.doc), "the edit must commit through the same worker");
+        assert!(h.app.session.doc.features.len() > before.features.len());
+        assert!(h.app.preview.active && !h.app.preview.busy && h.app.preview.error.is_none());
+        assert_ne!(h.app.preview.key, preview_key, "changed model geometry must invalidate the existing preview");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn panel_row_click_runs_on_the_command_worker_and_refreshes_its_data() {
         let mut h = crate::scenario::Harness::new();
@@ -3194,6 +3520,15 @@ mod native {
         assert!(opened.form_guard.is_some());
         assert_eq!(opened.ready(&h.app).unwrap(), json!({"length":20.0,"width":10.0,"height":3.0}));
         assert_eq!(h.app.session.doc, before);
+        h.app.plugin_menu.dialogs.clear();
+        run_panel(&mut h.app, "plugin.run".into(), json!({"path":plugin.path,"approval":plugin.approval,"entry":"choose","params":{}})).unwrap();
+        settle(&mut h);
+        checked_prefill(&h.app);
+        let opened = h.app.plugin_menu.dialog().expect("the same guest request opens from a panel action");
+        assert_eq!(opened.entry, "edit");
+        assert!(opened.form_guard.is_some());
+        assert_eq!(opened.ready(&h.app).unwrap(), json!({"length":20.0,"width":10.0,"height":3.0}));
+        assert_eq!(h.app.session.doc, before, "opening a panel's requested form changes no geometry");
         let _ = std::fs::remove_dir_all(root);
     }
 

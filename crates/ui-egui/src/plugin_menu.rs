@@ -72,7 +72,7 @@ pub(crate) struct State {
     /// Trusted folder consent keyed by an internal request serial, never by JSON arguments.
     folder_consents: std::collections::BTreeMap<u64, solidcraft_engine::plugin::folders::DialogFolders>,
     panel_pick: Option<PanelPick>,
-    panel_runs: Vec<std::sync::mpsc::Receiver<Value>>,
+    panel_runs: Vec<PanelRun>,
 }
 
 #[cfg(test)]
@@ -935,14 +935,25 @@ fn individually_pinned(app: &SolveApp, plugin: &Listed, entry: &solidcraft_engin
     app.toolbar_custom.panels.values().any(|ids| ids.iter().any(|id| *id == command || *id == button))
 }
 
-/// Explicit menus replace only their own entries. Without declarations, the menu's original
-/// order, labels and individual buttons are preserved. Empty on the web build.
+/// A ribbon slot names either a known tab or, for older packages, just a button label.
+fn ribbon_tab_slot(entry: &solidcraft_engine::plugin::Entry) -> bool {
+    entry.slots.iter().any(|slot| {
+        matches!(slot, solidcraft_engine::plugin::UiSlot::Ribbon { name }
+            if name.trim().eq_ignore_ascii_case("Model") || crate::plugin_slots::ribbon_name(name).is_some())
+    })
+}
+
+/// Explicit menus replace only their own entries. A package that declares tab placements
+/// exposes those entries and saved individual pins in Model's Plugins group; its helper
+/// entries remain available through the Plugins menu. Older packages keep their buttons.
+/// Empty on the web build.
 pub(crate) fn ribbon_buttons(app: &SolveApp) -> Vec<RibbonButton> {
     if cfg!(target_arch = "wasm32") {
         return Vec::new();
     }
     let mut buttons = Vec::new();
     for plugin in app.plugin_menu.listed.iter().filter(|p| shown(app, p)) {
+        let placed = plugin.entries.iter().any(ribbon_tab_slot);
         for (index, group) in plugin.ribbon_groups.iter().enumerate() {
             let icon = group.icon.as_ref().and_then(|path| plugin.images.get(path)).map_or(crate::plugin_images::GENERIC, String::as_str);
             buttons.push(RibbonButton {
@@ -953,6 +964,9 @@ pub(crate) fn ribbon_buttons(app: &SolveApp) -> Vec<RibbonButton> {
             });
         }
         for entry in &plugin.entries {
+            if placed && !ribbon_tab_slot(entry) && !individually_pinned(app, plugin, entry) {
+                continue;
+            }
             if plugin.ribbon_groups.iter().any(|group| group.entries.contains(&entry.name)) && !individually_pinned(app, plugin, entry) {
                 continue;
             }
@@ -960,7 +974,7 @@ pub(crate) fn ribbon_buttons(app: &SolveApp) -> Vec<RibbonButton> {
             let name = if title == plugin.name { title.clone() } else { format!("{}: {title}", plugin.name) };
             buttons.push(RibbonButton {
                 id: format!("{RIBBON_PREFIX}{}:{}", plugin.id, entry.name),
-                label: slot_name(entry, "ribbon").unwrap_or(title),
+                label: if ribbon_tab_slot(entry) { title } else { slot_name(entry, "ribbon").unwrap_or(title) },
                 name,
                 icon: command_icon(plugin, entry).to_owned(),
             });
@@ -1028,7 +1042,7 @@ pub(crate) fn ensure_listed(app: &mut SolveApp) {
     }
 }
 
-/// Open the dialog of the ribbon button `id` (`plugin_entry:<plugin id>:<entry name>`). Returns
+/// Activate the ribbon button `id` (`plugin_entry:<plugin id>:<entry name>`). Returns
 /// whether `id` was a plugin command's.
 pub(crate) fn choose_ribbon(app: &mut SolveApp, id: &str) -> bool {
     let Some((plugin, entry)) = id.strip_prefix(RIBBON_PREFIX).and_then(|rest| rest.split_once(':')) else { return false };
@@ -1037,7 +1051,7 @@ pub(crate) fn choose_ribbon(app: &mut SolveApp, id: &str) -> bool {
         Some((p, e))
     });
     if let Some((p, e)) = found {
-        open_entry(app, p, e);
+        activate_entry(app, p, e);
     }
     true
 }
@@ -1535,6 +1549,42 @@ pub(crate) struct Running {
     received: Option<Value>,
     /// The design copied by the worker at dispatch, retained with any deferred reply.
     source_guard: Option<solidcraft_engine::schema::plugin::FormGuard>,
+}
+
+/// A panel action has no input dialog, but its deferred forms still belong to the session
+/// and revision that its worker read.
+struct PanelRun {
+    session: u64,
+    running: Running,
+}
+
+/// A panel plugin's read command with nothing to ask can run directly from the ribbon.
+/// Ordinary reads keep their result dialog; stored forms and edits never execute here.
+pub(crate) fn activate_entry(app: &mut SolveApp, p: usize, e: usize) {
+    let Some(plugin) = app.plugin_menu.listed.get(p).cloned() else { return };
+    let Some(entry) = plugin.entries.get(e) else { return };
+    if !shown(app, &plugin) {
+        return;
+    }
+    if entry.kind == solidcraft_engine::plugin::EntryKind::Command
+        && entry.effect == solidcraft_engine::plugin::Effect::Read
+        && !entry.dialog_hook
+        && form(&entry.input_schema).is_some_and(|fields| fields.is_empty())
+        && missing_groups(app, &plugin).is_empty()
+        && app
+            .session
+            .plugin_state
+            .panels
+            .get(&plugin.id)
+            .is_some_and(|panels| panels.approval == plugin.approval && !panels.declarations.panels.is_empty())
+    {
+        let params = json!({"path":plugin.path,"approval":plugin.approval,"entry":entry.name,"params":{}});
+        if let Err(error) = run_panel(app, "plugin.run".into(), params) {
+            app.set_status(error, true);
+        }
+    } else {
+        open_entry(app, p, e);
+    }
 }
 
 /// Open the dialog of entry `e` of listed plugin `p`.
@@ -2616,7 +2666,10 @@ pub(crate) fn run_panel(app: &mut SolveApp, command: String, params: Value) -> R
     }
     let (request, reply) = solidcraft_control::ControlRequest::new("engine.execute", json!({"command":command,"params":params}));
     app.plugin_menu.pending.push((request.serial, app.session.uid));
-    app.plugin_menu.panel_runs.push(reply);
+    app.plugin_menu.panel_runs.push(PanelRun {
+        session: app.session.uid,
+        running: Running { serial: request.serial, reply, ticket: request.ticket.clone(), received: None, source_guard: None },
+    });
     app.control_held.push_back(request);
     Ok(())
 }
@@ -2631,7 +2684,14 @@ pub(crate) fn check_dispatch(app: &mut SolveApp, req: &solidcraft_control::Contr
         // validation and the unchanged live design share the same revision token.
         let guard =
             solidcraft_engine::schema::plugin::FormGuard { document_id: app.session.document_id.clone(), revision: app.session.design_revision() };
-        if let Some(running) = app.plugin_menu.dialogs.iter_mut().filter_map(|d| d.running.as_mut()).find(|r| Arc::ptr_eq(&r.ticket, &req.ticket)) {
+        if let Some(running) = app
+            .plugin_menu
+            .dialogs
+            .iter_mut()
+            .filter_map(|d| d.running.as_mut())
+            .chain(app.plugin_menu.panel_runs.iter_mut().map(|p| &mut p.running))
+            .find(|r| Arc::ptr_eq(&r.ticket, &req.ticket))
+        {
             running.source_guard = Some(guard);
         }
         Ok(())
@@ -2650,15 +2710,26 @@ pub(crate) fn take_folder_consent(app: &mut SolveApp, serial: u64) -> Option<sol
 /// Take the finished runs' replies: an edit closes its dialog, a read shows its result, an error
 /// stays in its dialog.
 pub(crate) fn poll(app: &mut SolveApp) {
-    for reply in std::mem::take(&mut app.plugin_menu.panel_runs) {
-        match reply.try_recv() {
+    for mut panel in std::mem::take(&mut app.plugin_menu.panel_runs) {
+        let reply = match panel.running.received.take() {
+            Some(reply) => Ok(reply),
+            None => panel.running.reply.try_recv(),
+        };
+        match reply {
             Ok(value) => {
                 if value.get("ok") != Some(&Value::Bool(true)) {
                     let error = value.get("error").and_then(Value::as_str).unwrap_or_else(|| solidcraft_ui_text::tr("ui.plugin_no_result"));
                     app.set_status(solidcraft_ui_text::format("ui.plugin_dialog_failed", &[("error", error)]), true);
+                } else if panel.session != app.session.uid {
+                    if crate::documents::open_sessions(app).iter().any(|session| session.uid == panel.session) {
+                        panel.running.received = Some(value);
+                        app.plugin_menu.panel_runs.push(panel);
+                    }
+                } else {
+                    open_requested_forms(app, &value, panel.running.source_guard);
                 }
             }
-            Err(std::sync::mpsc::TryRecvError::Empty) => app.plugin_menu.panel_runs.push(reply),
+            Err(std::sync::mpsc::TryRecvError::Empty) => app.plugin_menu.panel_runs.push(panel),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => app.set_status(app.tr("ui.plugin_no_result").to_owned(), true),
         }
     }

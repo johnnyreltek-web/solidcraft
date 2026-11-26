@@ -248,9 +248,22 @@ fn built(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut M
         fit_members(&segments, &regions, &placed, &ends, &fits, (&mut cut, &crossed, &mut dropped), (coped, gap))?;
         (cut, dropped, ends)
     };
-    // Each member's body; `None` for a piece left wholly inside the tubes it is fitted to.
+    // Uncut stock is independent too: complex library sections otherwise repeat their
+    // full extrusion serially for every path. Use the same bounded dispatcher as the
+    // corner cuts, including its validation/cancellation scopes and serial wasm path.
+    let uncut: Vec<usize> = (0..segments.len()).filter(|&m| dropped.get(m) != Some(&true) && cut.get(m).is_none_or(Option::is_none)).collect();
+    let results = kernel::map_on_threads(&uncut, 4, |&m| -> Result<Traced> {
+        let (id, a, b) = segments.get(m).ok_or_else(|| DocError::Invalid(format!("no member {m}")))?;
+        let (x, y) = axes.get(m).copied().ok_or_else(|| DocError::Invalid(format!("line `{id}` has no length")))?;
+        let at = ats.get(m).copied().unwrap_or(at);
+        let plane = Plane::new(*a - x * at.x - y * at.y, x, y).ok_or_else(|| DocError::Invalid(format!("line `{id}`: no plane square to it")))?;
+        member_body(plane, unreversed(m, *a), &regions, *b - *a, (0.0, a.dist(*b)), id)
+    });
+    let mut results = results.into_iter();
+    // Preserve member order and the first error in that order, regardless of completion
+    // order. `None` is a piece left wholly inside the tubes it is fitted to.
     let mut made = Vec::with_capacity(segments.len());
-    for (m, (id, a, b)) in segments.iter().enumerate() {
+    for m in 0..segments.len() {
         if dropped.get(m) == Some(&true) {
             made.push(None);
             continue;
@@ -259,10 +272,8 @@ fn built(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut M
             made.push(Some(t));
             continue;
         }
-        let (x, y) = axes.get(m).copied().ok_or_else(|| DocError::Invalid(format!("line `{id}` has no length")))?;
-        let at = ats.get(m).copied().unwrap_or(at);
-        let plane = Plane::new(*a - x * at.x - y * at.y, x, y).ok_or_else(|| DocError::Invalid(format!("line `{id}`: no plane square to it")))?;
-        made.push(Some(member_body(plane, unreversed(m, *a), &regions, *b - *a, (0.0, a.dist(*b)), id)?));
+        let result = results.next().flatten().unwrap_or_else(|| Err(kernel::KernelError::Internal("frame member worker failed".into()).into()));
+        made.push(Some(result?));
     }
     // A point in the section's material (a tube's wall, not its bore), half way along member m.
     let inside = regions.first().map(|r| r.interior_point()).ok_or_else(|| DocError::Invalid("the member profile has no area".into()))?;
@@ -874,11 +885,14 @@ fn cut_members(
     copes: Vec<(usize, usize, Vec3, Vec3, f64)>,
 ) -> Result<Vec<Option<Traced>>> {
     let id = |m: usize| segments.get(m).map_or("", |s| s.0.as_str());
+    // Resolve placement before dispatch: the dialog's placement closures need not be Sync.
+    let planes: Vec<_> = segments.iter().enumerate().map(|(m, (_, a, _))| (placed(m, *a), unreversed(m, *a))).collect();
     // Member m built out at its cut ends and cut there, from `regions`.
     let build = |m: usize, regions: &[Region2]| -> Result<Traced> {
         let ((id, a, b), [start, end]) = segments.get(m).zip(ends.get(m)).ok_or_else(|| DocError::Invalid(format!("no member {m}")))?;
+        let (plane, original) = planes.get(m).ok_or_else(|| DocError::Invalid(format!("no member {m}")))?;
         let (lo, hi) = (start.map_or(0.0, |c| c.1), end.map_or(0.0, |c| c.1));
-        let mut t = member_body(placed(m, *a), unreversed(m, *a), regions, *b - *a, (-lo, a.dist(*b) + hi), id)?;
+        let mut t = member_body(*plane, *original, regions, *b - *a, (-lo, a.dist(*b) + hi), id)?;
         for (cut, role) in [(start, "corner_start"), (end, "corner_end")] {
             let Some((Some(cut), _, _, _)) = cut else { continue };
             let plane =
@@ -893,18 +907,24 @@ fn cut_members(
         }
         Ok(t)
     };
-    let mut out = Vec::with_capacity(segments.len());
-    for (m, (id, _, _)) in segments.iter().enumerate() {
+    // Plane cuts of different members are independent. Keep their input order (and first
+    // error) while sharing the caller's validation and cancellation scopes. Four lanes bound
+    // memory and leave room for the window; the existing dispatcher stays serial on wasm.
+    let members: Vec<_> = (0..segments.len()).collect();
+    let results = kernel::map_on_threads(&members, 4, |&m| -> Result<Option<Traced>> {
         if ends.get(m).is_none_or(|e| e.iter().all(Option::is_none)) {
-            out.push(None);
-            continue;
+            return Ok(None);
         }
         let t = build(m, regions)?;
         if t.body.lumps()?.len() > 1 {
-            return Err(DocError::Invalid(format!("the member on line `{id}` is cut into pieces by its corners")));
+            return Err(DocError::Invalid(format!("the member on line `{}` is cut into pieces by its corners", id(m))));
         }
-        out.push(Some(t));
-    }
+        Ok(Some(t))
+    });
+    let mut out = results
+        .into_iter()
+        .map(|r| r.unwrap_or_else(|| Err(kernel::KernelError::Internal("frame member worker failed".into()).into())))
+        .collect::<Result<Vec<_>>>()?;
     // Copes after every plane cut. T filled is T built from its outlines alone, holes closed (with a weld gap, grown by
     // it: [`member_tool`]); U keeps its largest piece on its own side of T, its centre of mass on U's side (what lies
     // past T, and slivers on T's far side, go).
@@ -2813,6 +2833,15 @@ fn profile_regions(vals: &BTreeMap<String, Value>, st: &ModelState, profile: &Me
             let origin = p.origin();
             (vec![p.region()?], profile.size.clone().unwrap_or_else(|| p.description()), origin)
         }
+        MemberProfile::Snapshot { name, sketch } => {
+            frame::validate_snapshot(name, sketch)?;
+            let profiles = solidcraft_sketch::find_profiles_checked(sketch);
+            if profiles.incomplete || profiles.profiles.is_empty() {
+                return Err(DocError::Invalid("profile snapshot must form a closed section".into()));
+            }
+            let picked = material_profiles(profiles.profiles, name)?;
+            (solidcraft_sketch::merge_regions(&picked), name.clone(), Vec2::ZERO)
+        }
         MemberProfile::Sketch { sketch, profiles } => {
             let ss = st.sketch(sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?;
             let picked = match profiles {
@@ -2839,8 +2868,13 @@ fn material(ss: &SolvedSketch) -> Result<Vec<Region2>> {
     if ps.is_empty() {
         return Err(crate::eval::no_closed_profiles(ss));
     }
+    material_profiles(ps, &ss.name)
+}
+
+/// Nested material selection shared by live sketches and independent library snapshots.
+fn material_profiles(ps: Vec<solidcraft_sketch::Profile>, name: &str) -> Result<Vec<Region2>> {
     if ps.len() > MAX_PROFILE_PIECES {
-        return Err(DocError::Invalid(format!("{} has more than {MAX_PROFILE_PIECES} profiles (pick the member's with `profiles`)", ss.name)));
+        return Err(DocError::Invalid(format!("{name} has more than {MAX_PROFILE_PIECES} profiles (pick the member's with `profiles`)")));
     }
     // Outer polylines and their boxes, once.
     let polys: Vec<Ring<Vec2>> = ps.iter().map(|p| p.region.outer.polyline(1e-3)).collect();

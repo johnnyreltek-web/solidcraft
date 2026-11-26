@@ -8,6 +8,51 @@ use std::f64::consts::PI;
 
 const SPANDREL: f64 = 1.0 - PI / 4.0;
 
+fn snapshot_polygon(count: usize) -> solidcraft_sketch::Sketch {
+    let points: Vec<_> = (0..count)
+        .map(|i| {
+            let angle = 2.0 * PI * i as f64 / count as f64;
+            serde_json::json!({"id":format!("p{i}"),"pos":[10.0 * angle.cos(),10.0 * angle.sin()],"fixed":true})
+        })
+        .collect();
+    let curves: Vec<_> = (0..count)
+        .map(|i| {
+            serde_json::json!({
+                "id":format!("l{i}"),"type":"line","a":i,"b":(i + 1) % count,"fixed":true
+            })
+        })
+        .collect();
+    serde_json::from_value(serde_json::json!({"points":points,"curves":curves,"constraints":[]})).unwrap()
+}
+
+#[test]
+fn snapshot_boundary_curve_limit_accepts_312_and_512_but_refuses_513() {
+    for count in [312, 512] {
+        let sketch = snapshot_polygon(count);
+        validate_snapshot("Detailed closed section", &sketch).unwrap();
+        assert_eq!(sketch.curves.len(), count);
+    }
+    let sketch = snapshot_polygon(513);
+    let original = serde_json::to_value(&sketch).unwrap();
+    let error = validate_snapshot("Oversized section", &sketch).unwrap_err();
+    assert!(error.to_string().contains("1–512 curves"), "{error}");
+    assert_eq!(serde_json::to_value(&sketch).unwrap(), original, "refusal never modifies the snapshot");
+}
+
+#[test]
+fn snapshot_point_limit_accepts_1537_but_refuses_1538() {
+    let mut value = serde_json::to_value(snapshot_polygon(512)).unwrap();
+    let points = value["points"].as_array_mut().unwrap();
+    // Extra fixed reference points do not change the closed boundary or its indices.
+    points.extend((512..1537).map(|i| serde_json::json!({"id":format!("p{i}"),"pos":[0,0],"fixed":true})));
+    let sketch = serde_json::from_value(value.clone()).unwrap();
+    validate_snapshot("Section at point limit", &sketch).unwrap();
+    value["points"].as_array_mut().unwrap().push(serde_json::json!({"id":"p1537","pos":[0,0],"fixed":true}));
+    let sketch = serde_json::from_value(value).unwrap();
+    let error = validate_snapshot("Section above point limit", &sketch).unwrap_err();
+    assert!(error.to_string().contains("1537 points"), "{error}");
+}
+
 fn close(got: f64, want: f64, what: &str) {
     let tol = 1e-9 * (1.0 + want.abs());
     assert!((got - want).abs() <= tol, "{what}: got {got}, want {want}");
