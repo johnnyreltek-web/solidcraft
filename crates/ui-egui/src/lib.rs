@@ -2404,6 +2404,7 @@ impl SolveApp {
         let mut request = file_load::Request::new(path, file_load::Kind::InsertDesign);
         request.allow_hosts = solidcraft_engine::io::vfs::network_host(path).into_iter().collect();
         request.note = note;
+        request.place_inserted_design = true;
         // A request that could not be queued has said why in the status line.
         let _ = file_load::begin_request(self, request);
     }
