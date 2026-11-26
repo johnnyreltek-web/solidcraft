@@ -49,7 +49,9 @@ pub(crate) fn tick(app: &mut SolveApp) {
 
 fn sync(app: &SolveApp, library: &mut State) {
     let Some(data) = app.session.plugin_state.panels.get("profile-library").and_then(|p| p.data.get("library")) else { return };
-    if library.data.as_ref() == Some(data) {
+    // PanelData equality includes updates waiting for the next rendered frame. Compare the
+    // adopted values we actually read, or a pending catalog could be cached as an empty list.
+    if library.data.as_ref().is_some_and(|cached| cached.values() == data.values()) {
         return;
     }
     library.profiles = data

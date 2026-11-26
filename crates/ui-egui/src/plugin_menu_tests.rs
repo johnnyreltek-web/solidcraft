@@ -2167,24 +2167,53 @@ fn native_frame_catalog_pins_package_approval_and_only_reloads_on_refresh() {
     crate::frame_library::tick(&mut h.app);
     assert!(h.app.control_held.is_empty(), "completion does not trigger another read");
 
-    // Exercise the real Refresh control without dispatching a guest or reading any files.
+    // A worker supplies pending data before the renderer adopts it. Native rows must
+    // notice adoption even though PanelData's logical equality intentionally does not.
+    let record = json!({"name":"Tube 2","category":"Steel","profile":{
+        "kind":"rect_tube","width":"2 in","height":"2 in","wall":"1/8 in"
+    }});
+    let data = h.app.session.plugin_state.panels.get_mut("profile-library").unwrap().data.entry("library".into()).or_default();
+    data.set_data(&[solidcraft_engine::plugin::ui::Datum {
+        path: "/profiles/0/definition".into(),
+        value: solidcraft_engine::plugin::ui::UiValue::Text(record.to_string()),
+    }])
+    .unwrap();
+    let pending = data.clone();
+
+    // Exercise the actual picker and Refresh control without running a guest or reading files.
     let mut dialog = h.app.dialog.take().unwrap();
     let crate::dialogs::Kind::Frame(member) = &mut dialog.kind else { panic!("native frame form") };
     let ctx = egui::Context::default();
-    let mut paint = |events| {
+    let mut paint = |app: &SolveApp, events| {
+        crate::scenario::clear_handles();
         let input =
             egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))), events, ..Default::default() };
-        let _ = ctx.run(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                crate::frame_library::rows(&h.app, ui, member, &mut dialog.inputs);
-            });
-        });
+        ctx.run_ui(input, |ui| crate::frame_library::rows(app, ui, member, &mut dialog.inputs)).textures_delta.clear();
     };
-    paint(Vec::new());
+    paint(&h.app, Vec::new());
+    let data = h.app.session.plugin_state.panels.get_mut("profile-library").unwrap().data.get_mut("library").unwrap();
+    assert!(data.values().is_empty(), "rows initially see the unadopted snapshot");
+    assert!(data.merge_frame());
+    assert_eq!(*data, pending, "adoption changes visible values but preserves logical equality");
+    paint(&h.app, Vec::new());
+    let at = crate::scenario::rect_of("dialog:widget:ui.frame_library.label").expect("native profile picker").center();
+    paint(&h.app, crate::test_support::pointer(at, true));
+    paint(&h.app, crate::test_support::pointer(at, false));
+    paint(&h.app, Vec::new());
+    let at = crate::scenario::rect_of("dialog:ui.frame_library.label:Steel / Tube 2")
+        .expect("adopted Tube 2 appears before opening Manage Profiles")
+        .center();
+    paint(&h.app, crate::test_support::pointer(at, true));
+    paint(&h.app, crate::test_support::pointer(at, false));
+    paint(
+        &h.app,
+        vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }],
+    );
+    paint(&h.app, Vec::new());
     let key = format!("dialog:button::{}", h.app.tr("ui.frame_library.refresh"));
     let at = crate::scenario::rect_of(&key).expect("the real library refresh button").center();
-    paint(crate::test_support::pointer(at, true));
-    paint(crate::test_support::pointer(at, false));
+    paint(&h.app, crate::test_support::pointer(at, true));
+    paint(&h.app, crate::test_support::pointer(at, false));
     h.app.dialog = Some(dialog);
     for _ in 0..5 {
         crate::frame_library::tick(&mut h.app);
