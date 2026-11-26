@@ -1026,6 +1026,7 @@ mod view_compass {
                     snap_hint,
                     home_label: "Home".into(),
                     turn_around_label: None,
+                    roll_labels: None,
                 };
                 show(ui, &compass);
             });

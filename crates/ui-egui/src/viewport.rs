@@ -11192,6 +11192,10 @@ fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, focused_v
         snap_hint: !app.preferences.free_orbit,
         home_label: solidcraft_ui_text::tr_label("Home view").to_owned(),
         turn_around_label: (focused_view && app.preferences.navigator_turn_around).then(|| app.tr("ui.navigator_turn_around").to_owned()),
+        roll_labels: focused_view.then(|| [
+            app.tr("ui.navigator_roll_counterclockwise").to_owned(),
+            app.tr("ui.navigator_roll_clockwise").to_owned(),
+        ]),
     };
     // The compass returns a view action; its drag came from `axis_view_orbit` above.
     match crate::view_compass::show(ui, &compass) {
@@ -11209,6 +11213,14 @@ fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, focused_v
         Some(crate::view_compass::ViewAction::TurnAround) => {
             let camera = app.cam_anim.as_ref().map_or(app.cam, |animation| animation.to);
             let _ = app.run("view.navigate", json!({"camera":camera,"action":"turn_around","fit":app.preferences.navigator_fit}));
+        }
+        Some(crate::view_compass::ViewAction::Roll { clockwise }) => {
+            let mut camera = app.cam_anim.as_ref().map_or(app.cam, |animation| animation.to);
+            let quarter_turn = std::f64::consts::FRAC_PI_2;
+            let delta = if clockwise { quarter_turn } else { -quarter_turn };
+            camera.roll = (camera.roll + delta + std::f64::consts::PI)
+                .rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+            app.animate_to(camera);
         }
         None => {}
     }
