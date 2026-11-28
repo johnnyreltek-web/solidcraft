@@ -75,19 +75,20 @@ fn model_picks_offer_their_commands_to_start() {
     assert!(!ids(&fitting(&h.app)).contains(&"solid.fillet"));
 }
 
-/// Shift+S opens the quick menu at the cursor; changing the selection closes it.
+/// S opens the quick menu at the cursor; changing the selection closes it.
 #[test]
 fn the_key_opens_the_quick_menu_and_a_new_selection_closes_it() {
     let mut h = sketch();
     h.app.session.selection = vec![curve("l2"), curve("l1")];
     h.frames(3);
-    h.step(&json!({"key": "S", "shift": true})).unwrap();
+    h.step(&json!({"key": "S"})).unwrap();
     h.frames(2);
-    assert!(h.app.viewport.context_menu.is_some(), "Shift+S opens the menu");
+    assert!(h.app.viewport.context_menu.is_some(), "S opens the menu");
     assert_eq!(h.app.menu.target, Target::Quick);
     let listed = h.call("ui.menu", json!({}));
     let labels: Vec<&str> = listed["result"]["items"].as_array().into_iter().flatten().filter_map(|i| i["label"].as_str()).collect();
-    assert!(labels.contains(&"Parallel"), "{listed}");
+    assert!(labels.contains(&"Line") && labels.contains(&"Finish Sketch"), "{listed}");
+    assert!(!labels.contains(&"Parallel"), "the manual menu keeps the chosen tools: {listed}");
     let _ = h.app.run("select.set", json!({"items": [{"type": "sketch_curve", "id": "c1"}]}));
     h.frames(2);
     assert!(h.app.viewport.context_menu.is_none(), "a new selection closes it");
@@ -183,4 +184,147 @@ fn constraint_icons_in_the_selection_do_not_hide_the_lines_constraints() {
     for id in ["sketch.constraint.parallel", "sketch.constraint.perpendicular", "sketch.constraint.equal"] {
         assert!(listed.contains(&id.to_string()), "{id} missing from {listed:?}");
     }
+}
+
+/// A sketch takes precedence; root assemblies and subassemblies differ from editing a leaf.
+#[test]
+fn quick_menu_context_tracks_sketches_and_active_assembly_components() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.home.open = false;
+    assert_eq!(Context::of(&h.app), Context::Part);
+    h.app.ui.tab = "ASSEMBLE".into();
+    assert_eq!(Context::of(&h.app), Context::Assembly, "an empty assembly can begin from its ribbon");
+    h.app.ui.tab = "MODEL".into();
+    let sub = h.app.run("component.create", json!({"name":"Subassembly"})).unwrap()["component"].as_u64().unwrap();
+    let leaf = h.app.run("component.create", json!({"name":"Part"})).unwrap()["component"].as_u64().unwrap();
+    assert_eq!(Context::of(&h.app), Context::Part, "creating a leaf activates that part");
+    h.app.run("component.activate", json!({"component":sub})).unwrap();
+    assert_eq!(Context::of(&h.app), Context::Assembly);
+    h.app.run("component.activate", json!({"component":0})).unwrap();
+    assert_eq!(Context::of(&h.app), Context::Assembly);
+    h.app.run("component.activate", json!({"component":leaf})).unwrap();
+    h.app.ui.tab = "ASSEMBLE".into();
+    assert_eq!(Context::of(&h.app), Context::Part, "a leaf remains a part even with the old assembly tab selected");
+    h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+    assert_eq!(Context::of(&h.app), Context::Sketch);
+    h.app.run("sketch.finish", json!({})).unwrap();
+    assert_eq!(Context::of(&h.app), Context::Part);
+}
+
+#[test]
+fn quick_menu_customization_is_reachable_and_edits_each_context_independently() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.home.open = false;
+    h.frames(3);
+    h.step(&json!({"move":[600,400]})).unwrap();
+    h.step(&json!({"key":"S"})).unwrap();
+    h.frames(2);
+    assert_eq!(h.call("ui.menuPick", json!({"item":"ui.quickMenuCustomize"}))["ok"], true);
+    h.frames(3);
+    assert!(h.app.quick_menu.editor);
+    assert!(h.app.viewport.context_menu.is_none());
+    let before_design = h.app.session.doc.to_json();
+    let before_undo = h.app.session.undo.len();
+    let mut changed = BTreeMap::new();
+    for context in Context::ALL {
+        h.step(&json!({"click":{"handle":format!("quick_menu:context:{}", context.key())}})).unwrap();
+        h.frames(2);
+        let original = h.app.quick_menu.tools(context);
+        assert!(original.len() >= 2);
+        h.step(&json!({"click":{"handle":"quick_menu:1:0"}})).unwrap();
+        h.frames(2);
+        let reordered = h.app.quick_menu.tools(context);
+        assert_eq!(reordered[0], original[1]);
+        assert_eq!(reordered[1], original[0]);
+        h.step(&json!({"click":{"handle":"quick_menu:0:1"}})).unwrap();
+        h.frames(2);
+        assert_eq!(h.app.quick_menu.tools(context), original, "Up reverses Down");
+        h.step(&json!({"click":{"handle":"quick_menu:2:0"}})).unwrap();
+        h.frames(2);
+        assert!(!h.app.quick_menu.tools(context).contains(&original[0]));
+        h.step(&json!({"click":{"handle":"quick_menu:filter"}})).unwrap();
+        h.step(&json!({"key":"A","ctrl":true})).unwrap();
+        h.step(&json!({"text":original[0]})).unwrap();
+        h.frames(2);
+        h.step(&json!({"click":{"handle":format!("quick_menu:add:{}", original[0])}})).unwrap();
+        h.frames(2);
+        let list = h.app.quick_menu.tools(context);
+        assert_eq!(list.last(), original.first());
+        assert_eq!(list.len(), original.len());
+        changed.insert(context.key().to_string(), list);
+        for (key, list) in &changed {
+            assert_eq!(h.app.quick_menu.custom.get(key), Some(list), "editing one context preserves the others");
+        }
+    }
+    let saved = h.app.prefs();
+    let mut restored = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+    restored.load_prefs(&saved);
+    assert_eq!(restored.quick_menu.custom, changed);
+    assert!(!restored.quick_menu.editor, "the editor does not reopen after restart");
+    h.step(&json!({"click":{"handle":"quick_menu:context:part"}})).unwrap();
+    h.frames(2);
+    h.step(&json!({"click":{"handle":"quick_menu:reset"}})).unwrap();
+    h.frames(2);
+    assert_eq!(h.app.quick_menu.tools(Context::Part), Context::Part.defaults());
+    assert_eq!(h.app.quick_menu.custom.get("sketch"), changed.get("sketch"));
+    assert_eq!(h.app.quick_menu.custom.get("assembly"), changed.get("assembly"));
+    assert_eq!(h.app.session.doc.to_json(), before_design);
+    assert_eq!(h.app.session.undo.len(), before_undo);
+}
+
+#[test]
+fn quick_menu_loading_bounds_and_deduplicates_commands_and_preserves_an_empty_menu() {
+    let mut config = Config::default();
+    config.load(&json!({"sketch":["sketch.line","sketch.line",null,"missing.command","ui.quick_menu","ui.palette"],"part":[]}));
+    assert_eq!(config.tools(Context::Sketch), ["sketch.line"]);
+    assert!(config.tools(Context::Part).is_empty(), "an intentionally empty menu stays empty");
+    assert!(config.tools(Context::Assembly).contains(&"joint.create".to_string()));
+    let saved = config.prefs();
+    let mut restored = Config::default();
+    restored.load(&saved);
+    assert_eq!(restored.prefs(), saved);
+    let commands: Vec<_> = solidcraft_engine::command_specs().into_iter().filter(|c| allowed(c.id)).map(|c| c.id).collect();
+    restored.load(&json!({"part":commands}));
+    assert_eq!(restored.tools(Context::Part).len(), MAX_TOOLS);
+}
+
+#[test]
+fn escape_closes_the_quick_menu_without_cancelling_the_sketch_tool_or_selection() {
+    let mut h = sketch();
+    h.app.start("sketch.line");
+    h.app.session.selection = vec![curve("l1")];
+    h.frames(3);
+    h.step(&json!({"move":[600,400]})).unwrap();
+    let selection = h.app.session.selection.clone();
+    let active_sketch = h.app.session.active_sketch;
+    let before = h.app.session.doc.to_json();
+    assert_eq!(h.app.tool.as_ref().map(|tool| tool.cmd), Some("sketch.line"));
+    h.step(&json!({"key":"S"})).unwrap();
+    h.frames(2);
+    assert!(h.app.viewport.context_menu.is_some());
+    assert_eq!(h.app.menu.target, Target::Quick);
+    h.step(&json!({"key":"Escape"})).unwrap();
+    h.frames(2);
+    assert!(h.app.viewport.context_menu.is_none());
+    assert_eq!(h.app.tool.as_ref().map(|tool| tool.cmd), Some("sketch.line"));
+    assert_eq!(h.app.session.active_sketch, active_sketch);
+    assert_eq!(h.app.session.selection, selection);
+    assert_eq!(h.app.session.doc.to_json(), before);
+}
+
+#[test]
+fn typing_s_in_the_quick_menu_editor_filters_without_opening_a_menu() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.home.open = false;
+    customize(&mut h.app);
+    h.frames(3);
+    h.step(&json!({"click":{"handle":"quick_menu:filter"}})).unwrap();
+    h.frames(2);
+    h.step(&json!({"key":"S"})).unwrap();
+    h.step(&json!({"text":"s"})).unwrap();
+    h.frames(2);
+    assert_eq!(h.app.quick_menu.filter, "s");
+    assert!(h.app.quick_menu.editor);
+    assert!(h.app.viewport.context_menu.is_none());
+    assert!(!h.app.ui.palette_open);
 }

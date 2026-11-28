@@ -22,7 +22,7 @@
   {"click":{"handle":"button:sketch.finish"}},
   {"expect":{"sketching":false,"errors":0}},
   {"call":"ui.resize","params":{"width":320,"height":800}},
-  {"key":"S"},
+  {"key":"S","shift":true},
   {"key":"Escape"},
   {"expect":{"errors":0,"shown_handles":["ribbon:search","ribbon:workspace"]}}
 ]

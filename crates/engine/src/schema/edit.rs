@@ -50,6 +50,15 @@ pub struct PaletteParams {}
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct PaletteResult {}
 
+/// The context-specific quick menu is UI-owned and takes no parameters.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct QuickMenuParams {}
+
+/// Headless sessions refuse to open the quick menu and produce no result.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct QuickMenuResult {}
+
 /// `ui.toggle_visibility` takes nothing: it acts on the app's selection.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -1676,6 +1685,7 @@ mod tests {
         assert_keys(input_schema_for::<RepeatParams>(), &[]);
         assert_keys(input_schema_for::<AssistantParams>(), &[]);
         assert_keys(input_schema_for::<PaletteParams>(), &[]);
+        assert_keys(input_schema_for::<super::QuickMenuParams>(), &[]);
         assert_keys(input_schema_for::<ToggleVisibilityParams>(), &[]);
         assert_keys(input_schema_for::<DialogOkParams>(), &[]);
         assert_keys(input_schema_for::<UndoParams>(), &[]);

@@ -502,7 +502,7 @@ pub fn press(app: &mut SolveApp, key: &str, repeat: bool) {
     if keeps_old_show_hide(app, key) {
         app.start("ui.toggle_visibility");
     } else if let Some(id) = command_for(app, key) {
-        if repeat && matches!(id, "tab.view.pop_out" | "tab.view.move_to_window") {
+        if repeat && matches!(id, "ui.quick_menu" | "tab.view.pop_out" | "tab.view.move_to_window") {
             return;
         }
         if id == DRAG_ZOOM {
@@ -2174,21 +2174,21 @@ mod tests {
         assert!(h.app.ui.palette_open && h.app.dialog.is_none(), "typing in a field never repeats");
     }
 
-    /// Command search is an ordinary command (#12190): S opens it out of the box, Preferences ›
-    /// Shortcuts can move it, and S is then free for another command.
+    /// Command search is an ordinary command (#12190): Shift+S opens it out of the box, Preferences ›
+    /// Shortcuts can move it, and Shift+S is then free for another command.
     #[test]
-    fn command_search_can_move_off_s_and_s_can_start_another_command() {
+    fn command_search_can_move_off_shift_s_and_shift_s_can_start_another_command() {
         let mut h = crate::scenario::Harness::new();
         h.app.home.open = false;
         h.frames(2);
-        assert_eq!(effective(&h.app, "ui.palette").as_deref(), Some("S"));
-        h.step(&json!({"key": "S"})).unwrap();
-        assert!(h.app.ui.palette_open, "S opens command search by default");
+        assert_eq!(effective(&h.app, "ui.palette").as_deref(), Some("Shift+S"));
+        h.step(&json!({"key": "S", "shift": true})).unwrap();
+        assert!(h.app.ui.palette_open, "Shift+S opens command search by default");
         h.call("ui.palette", json!({"open": false}));
         h.frames(2);
         bind(&mut h.app, "ui.palette", "Shift+J", true).unwrap();
-        h.step(&json!({"key": "S"})).unwrap();
-        assert!(!h.app.ui.palette_open, "S no longer opens command search");
+        h.step(&json!({"key": "S", "shift": true})).unwrap();
+        assert!(!h.app.ui.palette_open, "Shift+S no longer opens command search");
         h.step(&json!({"key": "J", "shift": true})).unwrap();
         assert!(h.app.ui.palette_open, "its new key does");
         h.call("ui.palette", json!({"open": false}));
@@ -2198,17 +2198,43 @@ mod tests {
         let shown = display_for(&h.app, "ui.palette");
         assert_eq!(shown.as_deref(), Some("Shift+J"));
         assert_eq!(width(), Some(crate::ui_kit::CommandSearch::closed_width(&h.ctx, shown.as_deref())));
-        assert!(width() > Some(crate::ui_kit::CommandSearch::closed_width(&h.ctx, Some("S"))), "not the old S");
         bind(&mut h.app, "ui.palette", "", false).unwrap();
         h.frames(2);
         assert_eq!(width(), Some(crate::ui_kit::CommandSearch::closed_width(&h.ctx, None)));
         bind(&mut h.app, "ui.palette", "Shift+J", true).unwrap();
         h.frames(2);
+        bind(&mut h.app, "solid.box", "Shift+S", true).unwrap();
+        h.step(&json!({"key": "S", "shift": true})).unwrap();
+        h.frames(1);
+        assert_eq!(h.app.dialog.as_ref().and_then(|d| d.command()), Some("solid.box"), "Shift+S starts the command given it");
+        assert!(!h.app.ui.palette_open);
+    }
+
+    #[test]
+    fn quick_menu_can_move_off_s_and_s_can_start_another_command() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.frames(2);
+        h.step(&json!({"move": [600, 400]})).unwrap();
+        assert_eq!(effective(&h.app, "ui.quick_menu").as_deref(), Some("S"));
+        h.step(&json!({"key": "S"})).unwrap();
+        assert!(h.app.viewport.context_menu.is_some());
+        assert_eq!(h.app.menu.target, crate::context_menu::Target::Quick);
+        assert!(!h.app.ui.palette_open);
+        crate::context_menu::close(&mut h.app);
+        h.frames(2);
+        bind(&mut h.app, "ui.quick_menu", "Shift+J", true).unwrap();
+        h.step(&json!({"key": "S"})).unwrap();
+        assert!(h.app.viewport.context_menu.is_none());
+        h.step(&json!({"key": "J", "shift": true})).unwrap();
+        assert!(h.app.viewport.context_menu.is_some());
+        assert_eq!(h.app.menu.target, crate::context_menu::Target::Quick);
+        crate::context_menu::close(&mut h.app);
+        h.frames(2);
         bind(&mut h.app, "solid.box", "S", true).unwrap();
         h.step(&json!({"key": "S"})).unwrap();
-        h.frames(1);
-        assert_eq!(h.app.dialog.as_ref().and_then(|d| d.command()), Some("solid.box"), "S starts the command given it");
-        assert!(!h.app.ui.palette_open);
+        assert_eq!(h.app.dialog.as_ref().and_then(|d| d.command()), Some("solid.box"));
+        assert!(h.app.viewport.context_menu.is_none());
     }
 
     /// Show/Hide keeps V out of the box, can move to another key (#13241), and V can then start

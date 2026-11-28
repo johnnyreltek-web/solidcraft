@@ -1,0 +1,15 @@
+{
+  "en": {
+    "cmd.ui.quick_menu": "Quick Menu",
+    "quick_menu.assembly": "Assembly",
+    "quick_menu.customize": "Customize Quick Menu…",
+    "quick_menu.down": "Down",
+    "quick_menu.filter": "Find a command to add…",
+    "quick_menu.part": "Part",
+    "quick_menu.remove": "Remove",
+    "quick_menu.reset": "Restore defaults for this menu",
+    "quick_menu.saved": "Each context has its own commands. Changes are saved automatically.",
+    "quick_menu.sketch": "Sketch",
+    "quick_menu.up": "Up"
+  }
+}

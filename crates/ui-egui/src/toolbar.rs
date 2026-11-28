@@ -3100,6 +3100,18 @@ fn shortcuts_focused(app: &mut SolveApp, ctx: &egui::Context) {
         app.last_escape = None;
         return;
     }
+    // The cursor menu owns the first Escape, ahead of an unfinished tool or selection.
+    if app.viewport.context_menu.is_some()
+        && app.menu.target == crate::context_menu::Target::Quick
+        && crate::quick_menu::owns_window(app)
+        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        crate::context_menu::close(app);
+        app.esc_handled = true;
+        app.escape_owner = Some(crate::EscapeOwner::Overlay);
+        app.last_escape = None;
+        return;
+    }
     // The Keyboard Shortcuts window is waiting for a key: it is not a shortcut.
     if crate::keymap::capturing(app) {
         // Parameters is drawn before Preferences; do not let its footer see this Escape.
@@ -3112,7 +3124,11 @@ fn shortcuts_focused(app: &mut SolveApp, ctx: &egui::Context) {
     // These owners render after global shortcuts. Leave their Escape available to the
     // normal window/palette handler, but retain ownership if egui repeats the layout.
     if ctx.input(|input| input.key_pressed(egui::Key::Escape))
-        && (app.prefs_window.shell.open || app.keymap.open || app.ui.palette_open || ctx.memory(|memory| memory.top_modal_layer().is_some()))
+        && (app.prefs_window.shell.open
+            || app.keymap.open
+            || crate::quick_menu::editor_in_window(app)
+            || app.ui.palette_open
+            || ctx.memory(|memory| memory.top_modal_layer().is_some()))
     {
         app.escape_owner = Some(crate::EscapeOwner::Overlay);
         if crate::viewport_status::enabled(app) {
@@ -3157,7 +3173,8 @@ fn shortcuts_focused(app: &mut SolveApp, ctx: &egui::Context) {
         app.last_escape = None;
         return;
     }
-    if popup_owner
+    if crate::quick_menu::editor_in_window(app)
+        || popup_owner
         || inline_editor
         || chat_owner
         || crate::ui_kit::text_edit_owned_escape(ctx)
@@ -3205,7 +3222,7 @@ fn shortcuts_focused(app: &mut SolveApp, ctx: &egui::Context) {
     let mut ran = Vec::new();
     for (index, (k, repeat, mods)) in keys.into_iter().enumerate() {
         use egui::Key;
-        if drawing && k == Key::S && !mods.command && !mods.shift && !mods.alt {
+        if drawing && matches!(crate::keymap::command_for(app, &crate::keymap::key_name(k, mods)), Some("ui.palette" | "ui.quick_menu")) {
             app.start("ui.palette");
             continue;
         }
@@ -3384,11 +3401,6 @@ fn shortcuts_focused(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 // A single Esc with nothing left to cancel keeps the sketch open (#1804); a quick
                 // second press finishes it (above).
-            }
-            // The quick menu at the cursor (#5501), unless the person bound the key to a command.
-            Key::S if mods.shift && !mods.alt && crate::keymap::commands_for(app, crate::quick_menu::KEY).is_empty() => {
-                let at = ctx.input(|i| i.pointer.latest_pos()).unwrap_or(ctx.content_rect().center());
-                crate::quick_menu::open(app, at);
             }
             Key::F2 => {
                 if !crate::context_menu::press_shortcut(app, "F2") {

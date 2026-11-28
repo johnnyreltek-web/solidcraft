@@ -1,6 +1,7 @@
 [
  {
-  "key": "S"
+  "key": "S",
+  "shift": true
  },
  {
   "text": "Create Sketch"
@@ -41,7 +42,8 @@
   "key": "Escape"
  },
  {
-  "key": "S"
+  "key": "S",
+  "shift": true
  },
  {
   "text": "Finish Sketch"
@@ -55,7 +57,8 @@
   }
  },
  {
-  "key": "S"
+  "key": "S",
+  "shift": true
  },
  {
   "text": "Extrude"

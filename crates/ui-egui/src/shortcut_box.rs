@@ -1192,7 +1192,7 @@ mod tests {
         h.app.home.open = false;
         h.frames(2);
         let before = h.app.session.doc.features.len();
-        h.step(&json!({"key": "S"})).unwrap();
+        h.step(&json!({"key": "S", "shift": true})).unwrap();
         h.step(&json!({"text": r#"solid.box {"length": 10, "width": 10, "height": 10}"#})).unwrap();
         h.step(&json!({"key": "Enter"})).unwrap();
         h.frames(2);
@@ -1343,7 +1343,7 @@ mod tests {
         h.app.preferences.command_search_centred = true;
         h.frames(2);
         assert_eq!(rect_of("ribbon:search"), Some(closed), "closed, the field stays in the ribbon");
-        h.call("ui.key", json!({"key": "S"}));
+        h.call("ui.key", json!({"key": "S", "shift": true}));
         h.frames(10);
         assert!(h.app.ui.palette_open);
         let view = h.app.viewport.rect.unwrap();
@@ -1378,7 +1378,7 @@ mod tests {
         let toolbar = crate::scenario::rect_of("toolbar").unwrap();
         assert_eq!(crate::toolbar::TAB_ROW_HEIGHT, 30.0);
         assert_eq!(crate::toolbar::RIBBON_HEIGHT, 117.0);
-        assert_eq!(closed.size(), vec2(ui_kit::CommandSearch::closed_width(&h.ctx, Some("S")), 22.0));
+        assert_eq!(closed.size(), vec2(ui_kit::CommandSearch::closed_width(&h.ctx, Some("Shift+S")), 22.0));
         assert_eq!(closed.right(), toolbar.right() - 4.0);
         assert_eq!(closed.top(), toolbar.top() + 4.0);
         assert_eq!(closed.center().y, toolbar.top() + 15.0);

@@ -1936,8 +1936,8 @@ mod tests {
         assert!(rows.iter().all(|i| i.shortcut == "current"), "all existing tabs stay on by default");
         h.step(&json!({"click":{"handle":"ribbon:add_tab"}})).unwrap();
         assert!(h.app.viewport.context_menu.is_none(), "a second click closes the menu");
-        h.step(&json!({"key":"S"})).unwrap();
-        assert!(h.app.ui.palette_open, "the plus leaves single-key shortcuts available");
+        h.step(&json!({"key":"S","shift":true})).unwrap();
+        assert!(h.app.ui.palette_open, "the plus leaves command shortcuts available");
         h.step(&json!({"key":"Escape"})).unwrap();
         h.step(&json!({"click":{"handle":"ribbon:add_tab"}})).unwrap();
         h.call("ui.menuPick", json!({"item":"Sheet Metal"}));
@@ -2065,7 +2065,7 @@ mod tests {
             assert_eq!(h.app.ui.tab, tab, "{id}");
             h.step(&json!({"key":"Escape"})).unwrap();
         }
-        h.step(&json!({"key":"S"})).unwrap();
+        h.step(&json!({"key":"S","shift":true})).unwrap();
         h.step(&json!({"text":"Change Parameters"})).unwrap();
         h.step(&json!({"key":"Enter"})).unwrap();
         assert_eq!(h.app.ui.tab, "MANAGE");
