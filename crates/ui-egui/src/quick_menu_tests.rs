@@ -355,6 +355,8 @@ fn escape_closes_customization_without_cancelling_a_feature_dialog() {
         let mut h = crate::scenario::Harness::new();
         h.app.home.open = false;
         h.app.preferences.viewport_status_details = modern;
+        h.app.preferences.viewport_analysis_status = modern;
+        h.app.preferences.viewport_section_status = modern;
         h.app.start("solid.extrude");
         h.frames(3);
         assert!(h.app.dialog.is_some());
