@@ -207,7 +207,7 @@ pub(crate) fn editor(app: &mut SolveApp, ctx: &egui::Context) {
                 let mut list = app.quick_menu.tools(context);
                 let mut changed = false;
                 let mut action = None;
-                egui::ScrollArea::vertical().id_salt("quick_menu_chosen").max_height(220.0).show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("quick_menu_chosen").auto_shrink([false, true]).max_height(220.0).show(ui, |ui| {
                     for (index, id) in list.iter().enumerate() {
                         ui.push_id(id, |ui| {
                             ui.horizontal(|ui| {
@@ -255,7 +255,7 @@ pub(crate) fn editor(app: &mut SolveApp, ctx: &egui::Context) {
                 let (_, r) = crate::ui_kit::text_field_reserving(ui, &mut filter, solidcraft_ui_text::tr("quick_menu.filter"), 0.0);
                 crate::scenario::publish_target("quick_menu:filter", r.rect);
                 let query = filter.trim().to_lowercase();
-                egui::ScrollArea::vertical().id_salt("quick_menu_catalog").max_height(180.0).show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("quick_menu_catalog").auto_shrink([false, true]).max_height(180.0).show(ui, |ui| {
                     for (id, label) in &catalog {
                         if !query.is_empty() && !label.to_lowercase().contains(&query) && !id.contains(&query) {
                             continue;
