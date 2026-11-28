@@ -328,3 +328,41 @@ fn typing_s_in_the_quick_menu_editor_filters_without_opening_a_menu() {
     assert!(h.app.viewport.context_menu.is_none());
     assert!(!h.app.ui.palette_open);
 }
+
+#[test]
+fn escape_closes_customization_without_cancelling_the_underlying_sketch_tool() {
+    let mut h = sketch();
+    h.app.start("sketch.line");
+    customize(&mut h.app);
+    h.frames(3);
+    h.step(&json!({"click":{"handle":"quick_menu:filter"}})).unwrap();
+    h.step(&json!({"text":"measure"})).unwrap();
+    h.frames(2);
+    h.step(&json!({"key":"Escape"})).unwrap();
+    h.frames(2);
+    assert!(!h.app.quick_menu.editor);
+    assert_eq!(h.app.tool.as_ref().map(|tool| tool.cmd), Some("sketch.line"));
+    assert!(h.app.session.active_sketch.is_some());
+    h.step(&json!({"move":[600,400]})).unwrap();
+    h.step(&json!({"key":"S"})).unwrap();
+    h.frames(2);
+    assert!(h.app.viewport.context_menu.is_some(), "S works again after dismissing customization");
+}
+
+#[test]
+fn escape_closes_customization_without_cancelling_a_feature_dialog() {
+    for modern in [false, true] {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.preferences.viewport_status_details = modern;
+        h.app.start("solid.extrude");
+        h.frames(3);
+        assert!(h.app.dialog.is_some());
+        customize(&mut h.app);
+        h.frames(3);
+        h.step(&json!({"key":"Escape"})).unwrap();
+        h.frames(2);
+        assert!(!h.app.quick_menu.editor);
+        assert!(h.app.dialog.is_some(), "customization owns Escape with viewport status {modern}");
+    }
+}

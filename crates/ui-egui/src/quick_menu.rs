@@ -188,90 +188,94 @@ pub(crate) fn editor(app: &mut SolveApp, ctx: &egui::Context) {
         .collect();
     let mut catalog = catalog;
     catalog.sort_by(|a, b| a.1.cmp(b.1));
-    let closed = crate::ui_kit::Window::new(egui::Id::unique("sc_quick_menu_editor"), "settings", solidcraft_ui_text::tr("quick_menu.customize"))
-        .cards(2.0)
-        .show_body(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for choice in Context::ALL {
-                    let r = ui.selectable_label(context == choice, choice.label());
-                    crate::scenario::publish_target(&format!("quick_menu:context:{}", choice.key()), r.rect);
-                    if r.clicked() {
-                        context = choice;
+    let (closed, action) =
+        crate::ui_kit::Window::new(egui::Id::unique("sc_quick_menu_editor"), "settings", solidcraft_ui_text::tr("quick_menu.customize"))
+            .cards(2.0)
+            .fields()
+            .actions("", "Close", None)
+            .show(ctx, true, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for choice in Context::ALL {
+                        let r = ui.selectable_label(context == choice, choice.label());
+                        crate::scenario::publish_target(&format!("quick_menu:context:{}", choice.key()), r.rect);
+                        if r.clicked() {
+                            context = choice;
+                        }
                     }
-                }
-            });
-            ui.label(solidcraft_ui_text::tr("quick_menu.saved"));
-            let mut list = app.quick_menu.tools(context);
-            let mut changed = false;
-            let mut action = None;
-            egui::ScrollArea::vertical().id_salt("quick_menu_chosen").max_height(220.0).show(ui, |ui| {
-                for (index, id) in list.iter().enumerate() {
-                    ui.push_id(id, |ui| {
-                        ui.horizontal(|ui| {
-                            let label = solidcraft_engine::find_command(id).map_or(id.as_str(), |c| solidcraft_ui_text::tr_command(c.id, c.label));
-                            ui.label(label);
-                            for (op, text, enabled) in
-                                [(0, "quick_menu.up", index > 0), (1, "quick_menu.down", index + 1 < list.len()), (2, "quick_menu.remove", true)]
-                            {
-                                let r = crate::ui_kit::button(ui, solidcraft_ui_text::tr(text), crate::ui_kit::Button::Enabled(enabled));
-                                crate::scenario::publish_target(&format!("quick_menu:{op}:{index}"), r.rect);
-                                if r.clicked() {
-                                    action = Some((op, index));
+                });
+                ui.label(solidcraft_ui_text::tr("quick_menu.saved"));
+                let mut list = app.quick_menu.tools(context);
+                let mut changed = false;
+                let mut action = None;
+                egui::ScrollArea::vertical().id_salt("quick_menu_chosen").max_height(220.0).show(ui, |ui| {
+                    for (index, id) in list.iter().enumerate() {
+                        ui.push_id(id, |ui| {
+                            ui.horizontal(|ui| {
+                                let label =
+                                    solidcraft_engine::find_command(id).map_or(id.as_str(), |c| solidcraft_ui_text::tr_command(c.id, c.label));
+                                ui.label(label);
+                                for (op, text, enabled) in
+                                    [(0, "quick_menu.up", index > 0), (1, "quick_menu.down", index + 1 < list.len()), (2, "quick_menu.remove", true)]
+                                {
+                                    let r = crate::ui_kit::button(ui, solidcraft_ui_text::tr(text), crate::ui_kit::Button::Enabled(enabled));
+                                    crate::scenario::publish_target(&format!("quick_menu:{op}:{index}"), r.rect);
+                                    if r.clicked() {
+                                        action = Some((op, index));
+                                    }
                                 }
-                            }
+                            });
                         });
-                    });
+                    }
+                });
+                if let Some((op, index)) = action {
+                    match op {
+                        0 if index > 0 && index < list.len() => {
+                            list.swap(index, index - 1);
+                            changed = true;
+                        }
+                        1 if index + 1 < list.len() => {
+                            list.swap(index, index + 1);
+                            changed = true;
+                        }
+                        2 if index < list.len() => {
+                            list.remove(index);
+                            changed = true;
+                        }
+                        _ => {}
+                    }
+                }
+                let reset = crate::ui_kit::button(ui, solidcraft_ui_text::tr("quick_menu.reset"), crate::ui_kit::Button::Normal);
+                crate::scenario::publish_target("quick_menu:reset", reset.rect);
+                if reset.clicked() {
+                    app.quick_menu.custom.remove(context.key());
+                    list = app.quick_menu.tools(context);
+                    changed = false;
+                }
+                ui.separator();
+                let (_, r) = crate::ui_kit::text_field_reserving(ui, &mut filter, solidcraft_ui_text::tr("quick_menu.filter"), 0.0);
+                crate::scenario::publish_target("quick_menu:filter", r.rect);
+                let query = filter.trim().to_lowercase();
+                egui::ScrollArea::vertical().id_salt("quick_menu_catalog").max_height(180.0).show(ui, |ui| {
+                    for (id, label) in &catalog {
+                        if !query.is_empty() && !label.to_lowercase().contains(&query) && !id.contains(&query) {
+                            continue;
+                        }
+                        let enabled = list.len() < MAX_TOOLS && !list.iter().any(|s| s == id);
+                        let r = crate::ui_kit::button(ui, *label, crate::ui_kit::Button::Enabled(enabled));
+                        crate::scenario::publish_target(&format!("quick_menu:add:{id}"), r.rect);
+                        if r.clicked() {
+                            list.push((*id).into());
+                            changed = true;
+                        }
+                    }
+                });
+                if changed {
+                    app.quick_menu.custom.insert(context.key().into(), list);
                 }
             });
-            if let Some((op, index)) = action {
-                match op {
-                    0 if index > 0 && index < list.len() => {
-                        list.swap(index, index - 1);
-                        changed = true;
-                    }
-                    1 if index + 1 < list.len() => {
-                        list.swap(index, index + 1);
-                        changed = true;
-                    }
-                    2 if index < list.len() => {
-                        list.remove(index);
-                        changed = true;
-                    }
-                    _ => {}
-                }
-            }
-            let reset = crate::ui_kit::button(ui, solidcraft_ui_text::tr("quick_menu.reset"), crate::ui_kit::Button::Normal);
-            crate::scenario::publish_target("quick_menu:reset", reset.rect);
-            if reset.clicked() {
-                app.quick_menu.custom.remove(context.key());
-                list = app.quick_menu.tools(context);
-                changed = false;
-            }
-            ui.separator();
-            let (_, r) = crate::ui_kit::text_field_reserving(ui, &mut filter, solidcraft_ui_text::tr("quick_menu.filter"), 0.0);
-            crate::scenario::publish_target("quick_menu:filter", r.rect);
-            let query = filter.trim().to_lowercase();
-            egui::ScrollArea::vertical().id_salt("quick_menu_catalog").max_height(180.0).show(ui, |ui| {
-                for (id, label) in &catalog {
-                    if !query.is_empty() && !label.to_lowercase().contains(&query) && !id.contains(&query) {
-                        continue;
-                    }
-                    let enabled = list.len() < MAX_TOOLS && !list.iter().any(|s| s == id);
-                    let r = crate::ui_kit::button(ui, *label, crate::ui_kit::Button::Enabled(enabled));
-                    crate::scenario::publish_target(&format!("quick_menu:add:{id}"), r.rect);
-                    if r.clicked() {
-                        list.push((*id).into());
-                        changed = true;
-                    }
-                }
-            });
-            if changed {
-                app.quick_menu.custom.insert(context.key().into(), list);
-            }
-        });
     app.quick_menu.context = context;
     app.quick_menu.filter = filter.chars().take(256).collect();
-    app.quick_menu.editor = !closed;
+    app.quick_menu.editor = !closed && action != crate::ui_kit::Action::Cancel;
 }
 /// How far the pointer may move away from the open menu before it closes, in points.
 pub(crate) const LEAVE: f32 = 60.0;
