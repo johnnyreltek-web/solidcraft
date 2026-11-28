@@ -56,12 +56,21 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("Reset the saved application bar layout in the connected app; returns {reset: true}. Headless sessions validate the request only; no dialog or design change"),
     CommandSpec::new("ui.palette", "Search Commands", crate::checked!("ui.palette", palette))
         .icon("zoom")
-        .key("S")
+        .key("Shift+S")
         .noundo()
         .doc_only()
         .contract(&PALETTE_CONTRACT)
         .output(crate::schema::output_schema_for::<crate::schema::edit::PaletteResult>)
         .params("Open command search in the app. Headless calls are refused without changing the design"),
+    CommandSpec::new("ui.quick_menu", "Quick Menu", crate::checked!("ui.quick_menu", quick_menu))
+        .any_part()
+        .icon("settings")
+        .key("S")
+        .noundo()
+        .doc_only()
+        .contract(&QUICK_MENU_CONTRACT)
+        .output(crate::schema::output_schema_for::<crate::schema::edit::QuickMenuResult>)
+        .params("Open the context-specific quick menu in the app. Headless calls are refused without changing the design"),
     CommandSpec::new("ui.toggle_visibility", "Show/Hide Selection", crate::checked!("ui.toggle_visibility", toggle_visibility))
         .icon("eye")
         .key("V")
@@ -411,6 +420,13 @@ const PALETTE_CONTRACT: crate::schema::TypedContract<crate::schema::edit::Palett
 /// in Preferences › Shortcuts like any other command's.
 fn palette(_s: &mut Session, _p: &Value) -> Result<Value> {
     Err(EngineError::Other("ui.palette opens command search in the app; there is no search box in a headless session".into()))
+}
+
+const QUICK_MENU_CONTRACT: crate::schema::TypedContract<crate::schema::edit::QuickMenuParams> = crate::schema::TypedContract::new();
+
+/// The app opens the quick menu interactively through `SolveApp::start`.
+fn quick_menu(_s: &mut Session, _p: &Value) -> Result<Value> {
+    Err(EngineError::Other("ui.quick_menu opens the quick menu in the app; there is no quick menu in a headless session".into()))
 }
 
 const TOGGLE_VISIBILITY_CONTRACT: crate::schema::TypedContract<crate::schema::edit::ToggleVisibilityParams> = crate::schema::TypedContract::new();

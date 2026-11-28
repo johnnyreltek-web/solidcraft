@@ -2060,12 +2060,12 @@ fn assistant_toggle_is_refused_headlessly_without_changing_the_document() {
     assert_eq!((s.doc.to_json(), s.undo.len()), before);
     let spec = crate::find_command("ui.assistant").unwrap();
     assert_eq!((spec.shortcut, spec.tab, spec.undoable), (Some("Ctrl+Shift+A"), "", false));
-    // Command search likewise (#12190): S is its default key, not a reserved one.
+    // Command search likewise (#12190): Shift+S is its default key, not a reserved one.
     let error = s.execute("ui.palette", &json!({})).unwrap_err().to_string();
     assert!(error.contains("headless session"), "{error}");
     assert_eq!((s.doc.to_json(), s.undo.len()), before);
     let spec = crate::find_command("ui.palette").unwrap();
-    assert_eq!((spec.shortcut, spec.tab, spec.undoable), (Some("S"), "", false));
+    assert_eq!((spec.shortcut, spec.tab, spec.undoable), (Some("Shift+S"), "", false));
     // Show/Hide likewise (#13241): V is its default key, and a script names what to hide.
     let error = s.execute("ui.toggle_visibility", &json!({})).unwrap_err().to_string();
     assert!(error.contains("headless session"), "{error}");
@@ -2078,6 +2078,23 @@ fn assistant_toggle_is_refused_headlessly_without_changing_the_document() {
     assert_eq!((s.doc.to_json(), s.undo.len()), before);
     let spec = crate::find_command("ui.dialog_ok").unwrap();
     assert_eq!((spec.shortcut, spec.tab, spec.undoable), (None, "", false));
+}
+
+#[test]
+fn quick_menu_is_rebindable_and_refused_headlessly_without_changes() {
+    let mut s = Session::default();
+    let before = (s.doc.to_json(), s.revision, s.undo.len(), s.redo.len());
+    let spec = crate::find_command("ui.quick_menu").unwrap();
+    assert_eq!((spec.shortcut, spec.tab, spec.undoable), (Some("S"), "", false));
+    assert_eq!(spec.part, crate::cmd::Part::Any);
+    assert!(!spec.reads_model);
+    assert!(spec.contract.is_some() && spec.output.is_some());
+    let error = s.execute(spec.id, &json!({})).unwrap_err().to_string();
+    assert!(error.contains("headless session"), "{error}");
+    s.param_check = crate::schema::ParamCheck::Strict;
+    let error = s.execute(spec.id, &json!({"commands":[]})).unwrap_err().to_string();
+    assert!(error.contains("unknown key `commands`"), "{error}");
+    assert_eq!((s.doc.to_json(), s.revision, s.undo.len(), s.redo.len()), before);
 }
 
 #[test]

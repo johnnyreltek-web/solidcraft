@@ -2250,6 +2250,7 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
                 app.start("parts.resize");
             }
         }
+        "ui.quickMenuCustomize" => crate::quick_menu::customize(app),
         "ui.appBarEdit" => crate::app_bar_custom::run(app, &p),
         "ui.appBarCustomize" | "ui.appBarReset" => app.start(&item.id),
         "ui.repeat" => {
@@ -3715,6 +3716,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     show_rename(app, ctx);
     crate::design_properties::show_object(app, ctx);
     crate::quick_menu::watch(app, ctx);
+    crate::quick_menu::editor(app, ctx);
+    if app.menu.target == Target::Quick && !crate::quick_menu::owns_window(app) {
+        return;
+    }
     if app.viewport.context_menu.is_none() {
         return;
     }

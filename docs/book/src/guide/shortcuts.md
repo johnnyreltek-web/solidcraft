@@ -17,7 +17,7 @@ ordinary key. Releasing a modifier before that key removes it from the preview. 
 line tells you to add a key, release all keys, or wait for confirmation; the proposed chord
 stays visible during confirmation. Nothing is saved while the preview is still pending.
 
-On macOS, the editor, Help list, toolbar hints, context menus and S search display Cmd and
+On macOS, the editor, Help list, toolbar hints, context menus and command search display Cmd and
 Option. Existing settings retain SolidCraft's Ctrl/Cmd alias for the primary modifier;
 Control and Command pressed together are recorded explicitly as Ctrl+Cmd. Conflicting
 bindings still require confirmation, and built-in reserved shortcuts remain reserved.
@@ -71,7 +71,8 @@ Keys handled by the window itself:
 
 | Key | Action |
 |---|---|
-| S | command search under the ribbon search field |
+| S | customizable quick menu at the pointer, with separate Sketch, Part and Assembly command lists |
+| Shift+S | command search under the ribbon search field |
 | V | show or hide the selected bodies, sketches and planes; with a right-click menu open, its Show/Hide (a folder, the Origin folder, an origin plane) |
 | F2 | rename the selected browser or timeline item; with several bodies selected, all of them: the first takes the name, the others `name (2)`, `name (3)`…, as **Rename Selected Bodies** does in a selected body's menu |
 | F6 | fit the view to the selection, or to everything shown when nothing is selected; with a drawing open, fit the sheet (as End does) |
@@ -81,6 +82,15 @@ Keys handled by the window itself:
 | + / − | zoom in / out |
 | Ctrl+8 | look straight at the selected face, plane or sketch |
 | Esc | cancel the running command, or clear the selection |
+
+Press **S** over the view for the quick menu. Sketch editing uses the Sketch list; an active
+component with child occurrences uses Assembly; an active leaf component uses Part. At the
+root, the Assemble tab also selects the Assembly list. Drawing and Render use command search.
+Choose **Customize Quick Menu…**, select a context, then click a command below the filter to
+add it. **Up**, **Down** and **Remove** edit the order and contents. **Restore defaults for this
+menu** resets only the selected context. Changes save automatically in application settings,
+independently of the design and of search favorites. Escape closes the menu before cancelling
+the tool underneath it.
 
 While a value box has the keyboard (a dimension being added, a dialog field), keys type into
 it and single-letter shortcuts don't fire; Home and End move the caret. A focused list (a panel menu)

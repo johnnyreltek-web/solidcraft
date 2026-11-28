@@ -808,6 +808,7 @@ pub struct SolveApp {
     pub linked_design_clipboard: Option<String>,
     /// The S box (command search at the cursor): recent and pinned commands.
     pub sbox: shortcut_box::ShortcutBox,
+    pub(crate) quick_menu: quick_menu::Config,
     /// Keyboard shortcuts the user changed.
     pub keymap: keymap::Keymap,
     /// The Help menu and the About window.
@@ -1221,6 +1222,7 @@ impl SolveApp {
             tree,
             linked_design_clipboard: None,
             sbox: shortcut_box::ShortcutBox::default(),
+            quick_menu: quick_menu::Config::default(),
             keymap: keymap::Keymap::default(),
             help: help::HelpState::default(),
             messages: messages::Messages::default(),
@@ -1604,6 +1606,7 @@ impl SolveApp {
             "recent_opened_at": self.home.opened_at,
             "recent_forgotten": self.home.forgotten,
             "shortcut_box": self.sbox.prefs(),
+            "quick_menu": self.quick_menu.prefs(),
             "shortcuts": self.keymap.prefs(),
             "toolbar": self.toolbar_custom.prefs(),
             "settings_profiles": self.settings_profiles.prefs(),
@@ -1695,6 +1698,9 @@ impl SolveApp {
         self.home.forgotten = keys("recent_forgotten");
         if let Some(s) = v.get("shortcut_box") {
             self.sbox.load(s);
+        }
+        if let Some(s) = v.get("quick_menu") {
+            self.quick_menu.load(s);
         }
         if let Some(s) = v.get("shortcuts") {
             self.keymap.load(s);
@@ -2634,6 +2640,10 @@ impl SolveApp {
             if agent_chat::shown(self) {
                 agent_chat::toggle(self);
             }
+            return;
+        }
+        if id == "ui.quick_menu" {
+            quick_menu::request(self);
             return;
         }
         if id == "ui.palette" {
