@@ -1,0 +1,26 @@
+{
+  "en": {
+    "sheet.library.series_fractional": "Fractional inches"
+  },
+  "ar": {
+    "sheet.library.series_fractional": "بوصات كسرية"
+  },
+  "he": {
+    "sheet.library.series_fractional": "שברי אינץ׳"
+  },
+  "ja": {
+    "sheet.library.series_fractional": "インチ（分数）"
+  },
+  "vi": {
+    "sheet.library.series_fractional": "Inch phân số"
+  },
+  "zh": {
+    "sheet.library.series_fractional": "分数英寸"
+  },
+  "de": {
+    "sheet.library.series_fractional": "Zollbrüche"
+  },
+  "ko": {
+    "sheet.library.series_fractional": "분수 인치"
+  }
+}

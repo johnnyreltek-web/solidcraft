@@ -39,8 +39,8 @@ fn the_standard_library_has_the_issues_materials_each_value_with_its_sources() {
         ["Mild steel (cold-rolled)", "Stainless steel 304", "Aluminium 5052-H32", "Aluminium 6061-T6", "Copper C110", "Brass C260"]
     );
     // 55 gauge rows (10 steel, 9 stainless, 10 of each aluminium, 8 copper, 8 brass) and the 12
-    // metric thicknesses of each of the 6 materials.
-    assert_eq!(lib.rules.len(), 55 + 6 * 12);
+    // metric thicknesses and 4 fractional-inch thicknesses of each of the 6 materials.
+    assert_eq!(lib.rules.len(), 55 + 6 * (12 + 4));
     for source in &lib.sources {
         assert!(source.url.starts_with("https://") && !source.title.is_empty(), "{source:?}");
     }
@@ -56,6 +56,9 @@ fn the_standard_library_has_the_issues_materials_each_value_with_its_sources() {
         if r.gauge.ends_with(" mm") {
             // A metric thickness is its own label, from the preferred-number series.
             assert_eq!((r.sources[0].as_str(), r.chart.as_str(), r.gauge_label()), ("iso497", "", r.rule.thickness.clone()), "{}", r.rule.name);
+        } else if r.gauge.ends_with(" in") {
+            // Fractional stock sizes are exact lengths, not entries in a gauge chart.
+            assert_eq!((r.sources[0].as_str(), r.chart.as_str(), r.gauge_label()), ("inch-length", "", r.gauge.clone()), "{}", r.rule.name);
         } else {
             assert!(["msg", "uss", "awg"].contains(&r.sources[0].as_str()), "{}", r.rule.name);
             // A gauge is a label that says whose chart it is.
@@ -163,6 +166,23 @@ fn every_material_has_the_r10_metric_thicknesses() {
     }
     // A metric size is looked up as a gauge is.
     assert_eq!(standard_rule("Aluminium 5052-H32", "1.5mm").map(|r| r.rule.name.as_str()), Some("Aluminium 5052-H32, 1.5 mm"));
+}
+
+/// Fractional-inch stock sizes are available for every material without relabelling gauges.
+#[test]
+fn every_material_has_exact_fractional_inch_thicknesses() {
+    let sizes = [("3/16 in", 3.0 / 16.0), ("1/4 in", 1.0 / 4.0), ("3/8 in", 3.0 / 8.0), ("1/2 in", 1.0 / 2.0)];
+    for material in standard_materials() {
+        let rows: Vec<_> = standard_gauges(material).into_iter().filter(|r| r.gauge.ends_with(" in")).collect();
+        assert_eq!(rows.len(), sizes.len(), "{material}");
+        for (row, (label, inch)) in rows.iter().zip(sizes) {
+            assert_eq!(row.gauge, label, "{material}");
+            assert_eq!(inches(row), inch, "{}", row.rule.name);
+            assert!((values(&row.rule).thickness - inch * 25.4).abs() < 1e-12, "{}", row.rule.name);
+            assert_eq!(standard_rule(material, label), Some(*row));
+            assert_eq!(row.given, Given::default(), "stock sizes must not invent working bend settings");
+        }
+    }
 }
 
 /// The published approximate minimum radius for a 90° cold bend, the top of each range, by the

@@ -724,8 +724,8 @@ fn library_rules_keep_the_values_given_beside_them_and_refuse_what_the_library_l
     assert!(!plain.doc.to_json().contains("\"material\""));
     let lib = run(&mut s, "sheet.rule_library", json!({"material": "copper c110"}));
     let rules = lib["rules"].as_array().cloned().unwrap_or_default();
-    // 8 Brown & Sharpe gauges and the 12 metric thicknesses.
-    assert_eq!(rules.len(), 8 + 12, "{lib}");
+    // 8 Brown & Sharpe gauges, 12 metric thicknesses and 4 fractional-inch thicknesses.
+    assert_eq!(rules.len(), 8 + 12 + 4, "{lib}");
     assert!(rules.iter().all(|r| r["material"] == "Copper C110" && r["sources"].as_array().is_some_and(|s| !s.is_empty())), "{lib}");
     assert!(lib["sources"].as_array().is_some_and(|s| s.len() >= 5), "{lib}");
     assert!(s.execute("sheet.rule_library", &json!({"material": "unobtainium"})).is_err());

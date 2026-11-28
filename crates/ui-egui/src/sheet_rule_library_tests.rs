@@ -86,6 +86,43 @@ fn a_metric_thickness_is_listed_first_in_a_millimetre_design_and_picked_as_a_gau
 }
 
 #[test]
+fn every_material_offers_fractional_inches_and_applies_the_selected_thickness() {
+    let sizes = [("3/16 in", "0.1875 in"), ("1/4 in", "0.25 in"), ("3/8 in", "0.375 in"), ("1/2 in", "0.5 in")];
+    for material in solidcraft_engine::doc::sheet_library::standard_materials() {
+        let mut h = manager();
+        choose(&mut h, "sheet.library.material", material);
+        choose(&mut h, "sheet.library.series", "Fractional inches");
+        for (fraction, thickness) in sizes {
+            choose(&mut h, "sheet.library.gauge", &format!("{fraction}  {thickness}"));
+            let commands = ok_commands(&h);
+            let p = &commands[0].1;
+            assert_eq!(p["name"], format!("{material}, {fraction}"));
+            assert_eq!(p["material"], material);
+            assert_eq!(p["thickness"], thickness);
+            assert_eq!(p["bend_radius"], "Thickness", "the working radius remains the manager's");
+        }
+        assert!(h.app.session.doc.sheet.rules.is_empty(), "selection is only a draft until OK");
+        for (command, p) in ok_commands(&h) {
+            h.app.run(&command, p).unwrap();
+        }
+        assert_eq!(h.app.session.doc.sheet_rule(None).thickness, "0.5 in");
+    }
+}
+
+#[test]
+fn fractional_thicknesses_do_not_appear_in_the_gauge_or_metric_series() {
+    use solidcraft_engine::doc::sheet_library;
+    for material in sheet_library::standard_materials() {
+        let rows = sheet_library::standard_gauges(material);
+        for (series, suffix) in [(0, " ga"), (1, " mm"), (2, " in")] {
+            let filtered: Vec<_> = rows.iter().filter(|r| super::thickness_series(r) == series).collect();
+            assert!(!filtered.is_empty(), "{material}: {series}");
+            assert!(filtered.iter().all(|r| r.gauge.ends_with(suffix)), "{material}: {series}");
+        }
+    }
+}
+
+#[test]
 fn a_rule_pack_imports_into_the_personal_rules_and_they_export_as_one() {
     let dir = folder("roundtrip");
     let pack = dir.join("shop.csv");

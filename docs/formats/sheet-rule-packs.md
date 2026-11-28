@@ -7,7 +7,13 @@ Export pack… writes your personal rules as a pack. Packs are read only from lo
 you choose; SolidCraft never fetches one.
 
 SolidCraft's standard library (`assets/sheet-metal/standard-library.json`) is itself a pack in
-this format.
+this format. In the Rules manager, its thickness series are **Gauges**, **Metric**, and
+**Fractional inches**. Every listed material includes 3/16, 1/4, 3/8, and 1/2 inch sizes
+(4.7625, 6.35, 9.525, and 12.7 mm respectively). These are nominal dimensions rather than
+gauge numbers or a guarantee of supplier stock. They keep the existing working-radius and
+K-factor-estimate behaviour. Published minimum-radius data are used only where the source
+chart covers that thickness; the library does not extrapolate the aluminium chart beyond
+1/4 inch.
 
 ## JSON (version 1)
 

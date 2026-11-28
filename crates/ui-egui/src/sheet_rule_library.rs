@@ -27,7 +27,7 @@ enum Request {
 struct PanelState {
     /// The material picked: its name, or empty for none.
     material: String,
-    /// Which sizes the thickness menu lists: gauges (0) or metric thicknesses (1); until picked,
+    /// Which sizes the thickness menu lists: gauges (0), metric (1) or fractional inches (2); until picked,
     /// the design's units decide.
     series: Option<usize>,
     /// The gauge picked of it (its library rule's name), or empty.
@@ -51,11 +51,17 @@ fn gauge_label(r: &PackRule) -> String {
     if label == r.rule.thickness { label } else { format!("{label}  {}", r.rule.thickness) }
 }
 
-const SERIES_KEYS: [&str; 2] = ["sheet.library.series_gauge", "sheet.library.series_metric"];
+const SERIES_KEYS: [&str; 3] = ["sheet.library.series_gauge", "sheet.library.series_metric", "sheet.library.series_fractional"];
 
-/// A row of the metric series (`1.5 mm`), not of a gauge chart.
-fn is_metric(r: &PackRule) -> bool {
-    r.gauge.ends_with(" mm")
+/// Keep nominal inch thicknesses separate from gauge charts and metric sizes.
+fn thickness_series(r: &PackRule) -> usize {
+    if r.gauge.ends_with(" mm") {
+        1
+    } else if r.gauge.ends_with(" in") {
+        2
+    } else {
+        0
+    }
 }
 
 fn slot<'a>(values: &'a mut [String], key: &str) -> Option<&'a mut String> {
@@ -193,7 +199,7 @@ pub(crate) fn rows(ui: &mut egui::Ui, d: &mut Dialog, doc: &Document, can_export
                 state.series = Some(index);
             }
             let series = state.series.unwrap_or(series);
-            let gauges: Vec<&PackRule> = library::standard_gauges(&state.material).into_iter().filter(|r| is_metric(r) == (series == 1)).collect();
+            let gauges: Vec<&PackRule> = library::standard_gauges(&state.material).into_iter().filter(|r| thickness_series(r) == series).collect();
             let labels: Vec<String> = gauges.iter().map(|r| gauge_label(r)).collect();
             // The box shows the gauge alone; its menu gives each one's thickness too.
             let display =

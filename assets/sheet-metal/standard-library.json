@@ -33,6 +33,11 @@
       "id": "al-radii",
       "title": "Approximate minimum radius for 90° cold bend, by alloy, temper and thickness (the chart in Aircraft Spruce's aluminium catalog page): the top of the range for the next listed thickness at or above the sheet's; none where the chart allows a sharp bend",
       "url": "https://www.aircraftspruce.com/pdf/2026Individual/Cat26041.pdf"
+    },
+    {
+      "id": "inch-length",
+      "title": "Nominal fractional-inch thicknesses selected for the library: 3/16, 1/4, 3/8 and 1/2 in; exact unit conversion uses the international inch of 25.4 mm (NIST). These dimensions do not specify stock availability, tolerances or tooling.",
+      "url": "https://www.nist.gov/pml/owm/si-units-length"
     }
   ],
   "rules": [
@@ -289,6 +294,54 @@
       ]
     },
     {
+      "name": "Mild steel (cold-rolled), 3/16 in",
+      "material": "Mild steel (cold-rolled)",
+      "gauge": "3/16 in",
+      "chart": "",
+      "hardness": "medium",
+      "thickness": "0.1875 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Mild steel (cold-rolled), 1/4 in",
+      "material": "Mild steel (cold-rolled)",
+      "gauge": "1/4 in",
+      "chart": "",
+      "hardness": "medium",
+      "thickness": "0.25 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Mild steel (cold-rolled), 3/8 in",
+      "material": "Mild steel (cold-rolled)",
+      "gauge": "3/8 in",
+      "chart": "",
+      "hardness": "medium",
+      "thickness": "0.375 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Mild steel (cold-rolled), 1/2 in",
+      "material": "Mild steel (cold-rolled)",
+      "gauge": "1/2 in",
+      "chart": "",
+      "hardness": "medium",
+      "thickness": "0.5 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
       "name": "Stainless steel 304, 10 ga",
       "material": "Stainless steel 304",
       "gauge": "10 ga",
@@ -525,6 +578,54 @@
       "thickness": "6 mm",
       "source": [
         "iso497",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Stainless steel 304, 3/16 in",
+      "material": "Stainless steel 304",
+      "gauge": "3/16 in",
+      "chart": "",
+      "hardness": "hard",
+      "thickness": "0.1875 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Stainless steel 304, 1/4 in",
+      "material": "Stainless steel 304",
+      "gauge": "1/4 in",
+      "chart": "",
+      "hardness": "hard",
+      "thickness": "0.25 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Stainless steel 304, 3/8 in",
+      "material": "Stainless steel 304",
+      "gauge": "3/8 in",
+      "chart": "",
+      "hardness": "hard",
+      "thickness": "0.375 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Stainless steel 304, 1/2 in",
+      "material": "Stainless steel 304",
+      "gauge": "1/2 in",
+      "chart": "",
+      "hardness": "hard",
+      "thickness": "0.5 in",
+      "source": [
+        "inch-length",
         "kfactor"
       ]
     },
@@ -800,6 +901,58 @@
         "iso497",
         "kfactor",
         "al-radii"
+      ]
+    },
+    {
+      "name": "Aluminium 5052-H32, 3/16 in",
+      "material": "Aluminium 5052-H32",
+      "gauge": "3/16 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.1875 in",
+      "source": [
+        "inch-length",
+        "kfactor",
+        "al-radii"
+      ],
+      "min_bend_radius": "Thickness"
+    },
+    {
+      "name": "Aluminium 5052-H32, 1/4 in",
+      "material": "Aluminium 5052-H32",
+      "gauge": "1/4 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.25 in",
+      "source": [
+        "inch-length",
+        "kfactor",
+        "al-radii"
+      ],
+      "min_bend_radius": "Thickness * 1.5"
+    },
+    {
+      "name": "Aluminium 5052-H32, 3/8 in",
+      "material": "Aluminium 5052-H32",
+      "gauge": "3/8 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.375 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Aluminium 5052-H32, 1/2 in",
+      "material": "Aluminium 5052-H32",
+      "gauge": "1/2 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.5 in",
+      "source": [
+        "inch-length",
+        "kfactor"
       ]
     },
     {
@@ -1099,6 +1252,58 @@
       ]
     },
     {
+      "name": "Aluminium 6061-T6, 3/16 in",
+      "material": "Aluminium 6061-T6",
+      "gauge": "3/16 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.1875 in",
+      "source": [
+        "inch-length",
+        "kfactor",
+        "al-radii"
+      ],
+      "min_bend_radius": "Thickness * 4"
+    },
+    {
+      "name": "Aluminium 6061-T6, 1/4 in",
+      "material": "Aluminium 6061-T6",
+      "gauge": "1/4 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.25 in",
+      "source": [
+        "inch-length",
+        "kfactor",
+        "al-radii"
+      ],
+      "min_bend_radius": "Thickness * 4"
+    },
+    {
+      "name": "Aluminium 6061-T6, 3/8 in",
+      "material": "Aluminium 6061-T6",
+      "gauge": "3/8 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.375 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Aluminium 6061-T6, 1/2 in",
+      "material": "Aluminium 6061-T6",
+      "gauge": "1/2 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.5 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
       "name": "Copper C110, 10 ga",
       "material": "Copper C110",
       "gauge": "10 ga",
@@ -1327,6 +1532,54 @@
       ]
     },
     {
+      "name": "Copper C110, 3/16 in",
+      "material": "Copper C110",
+      "gauge": "3/16 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.1875 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Copper C110, 1/4 in",
+      "material": "Copper C110",
+      "gauge": "1/4 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.25 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Copper C110, 3/8 in",
+      "material": "Copper C110",
+      "gauge": "3/8 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.375 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Copper C110, 1/2 in",
+      "material": "Copper C110",
+      "gauge": "1/2 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.5 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
       "name": "Brass C260, 10 ga",
       "material": "Brass C260",
       "gauge": "10 ga",
@@ -1551,6 +1804,54 @@
       "thickness": "6 mm",
       "source": [
         "iso497",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Brass C260, 3/16 in",
+      "material": "Brass C260",
+      "gauge": "3/16 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.1875 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Brass C260, 1/4 in",
+      "material": "Brass C260",
+      "gauge": "1/4 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.25 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Brass C260, 3/8 in",
+      "material": "Brass C260",
+      "gauge": "3/8 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.375 in",
+      "source": [
+        "inch-length",
+        "kfactor"
+      ]
+    },
+    {
+      "name": "Brass C260, 1/2 in",
+      "material": "Brass C260",
+      "gauge": "1/2 in",
+      "chart": "",
+      "hardness": "soft",
+      "thickness": "0.5 in",
+      "source": [
+        "inch-length",
         "kfactor"
       ]
     }
